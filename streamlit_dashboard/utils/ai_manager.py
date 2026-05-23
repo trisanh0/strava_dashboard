@@ -84,6 +84,18 @@ def _save_cache(file_path: str, data: dict) -> bool:
             return False
 
 
+def _extract_json(text: str) -> dict | None:
+    """Extract and parse JSON from a raw text response as a fallback."""
+    try:
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start != -1 and end > start:
+            return json.loads(text[start:end])
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return None
+
+
 def clear_ai_cache():
     """Clear persistent AI cache files to force refresh."""
     global _last_insights_attempt, _last_headlines_attempt
@@ -141,15 +153,27 @@ def _fetch_insights_worker(
     for model_name in models:
         try:
             print(f"[BG] Attempting insights with model: {model_name}")
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config={"response_mime_type": "application/json"},
-            )
-            text = response.text
-            print(f"[BG] Insights response received successfully.")
+            try:
+                # Try 1: Call with structured JSON config (preferred for Gemini)
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config={"response_mime_type": "application/json"},
+                )
+                text = response.text
+                parsed = json.loads(text)
+            except Exception as e:
+                # Try 2: Fallback without response_mime_type (essential for Gemma models)
+                print(f"[BG] JSON mode failed for model {model_name}: {e}. Retrying without JSON config...")
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                )
+                text = response.text
+                parsed = _extract_json(text)
 
-            parsed = json.loads(text)
+            print(f"[BG] Insights response received. Parsed: {parsed is not None}")
+
             if isinstance(parsed, dict) and "insight" in parsed and "facts" in parsed:
                 cache_data = {
                     "timestamp": datetime.datetime.now().isoformat(),
@@ -171,6 +195,17 @@ def _fetch_insights_worker(
         _is_insights_fetching = False
         if not success:
             _last_insights_attempt = datetime.datetime.now()
+            # Save fallback to cache to prevent indefinite loading/fetching states
+            fallback_cache = {
+                "timestamp": datetime.datetime.now().isoformat(),
+                "summary_hash": summary_hash,
+                "content": {
+                    "insight": FALLBACK_RESPONSE["insight"],
+                    "facts": FALLBACK_RESPONSE["facts"],
+                    "model": "None (System Fallback)",
+                },
+            }
+            _save_cache(INSIGHTS_CACHE_PATH, fallback_cache)
 
 
 def _fetch_headlines_worker(
@@ -190,15 +225,27 @@ def _fetch_headlines_worker(
     for model_name in models:
         try:
             print(f"[BG] Attempting headlines with model: {model_name}")
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config={"response_mime_type": "application/json"},
-            )
-            text = response.text
-            print(f"[BG] Headlines response received successfully.")
+            try:
+                # Try 1: Call with structured JSON config
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config={"response_mime_type": "application/json"},
+                )
+                text = response.text
+                parsed = json.loads(text)
+            except Exception as e:
+                # Try 2: Fallback without response_mime_type (essential for Gemma models)
+                print(f"[BG] JSON mode failed for model {model_name}: {e}. Retrying without JSON config...")
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                )
+                text = response.text
+                parsed = _extract_json(text)
 
-            parsed = json.loads(text)
+            print(f"[BG] Headlines response received. Parsed: {parsed is not None}")
+
             if isinstance(parsed, dict) and "headlines" in parsed:
                 cache_data = {
                     "timestamp": datetime.datetime.now().isoformat(),
@@ -219,6 +266,16 @@ def _fetch_headlines_worker(
         _is_headlines_fetching = False
         if not success:
             _last_headlines_attempt = datetime.datetime.now()
+            # Save fallback to cache to prevent indefinite loading/fetching states
+            fallback_cache = {
+                "timestamp": datetime.datetime.now().isoformat(),
+                "summary_hash": summary_hash,
+                "content": {
+                    "headlines": FALLBACK_RESPONSE["headlines"],
+                    "model": "None (System Fallback)",
+                },
+            }
+            _save_cache(HEADLINES_CACHE_PATH, fallback_cache)
 
 
 # --- Public Entrypoints ---
