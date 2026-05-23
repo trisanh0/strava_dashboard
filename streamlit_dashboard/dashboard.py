@@ -11,7 +11,12 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from utils.ai_manager import generate_ai_content, get_client
+from utils.ai_manager import (
+    get_ai_insights_non_blocking,
+    get_ai_headlines_non_blocking,
+    clear_ai_cache,
+    get_client,
+)
 from utils.data_manager import get_data_summary, get_manual_fun_facts, load_data
 
 from config import (
@@ -153,10 +158,7 @@ def run_monte_carlo_simulation(
     return win_probs
 
 
-@st.cache_data(ttl=3600 * 4)
-def get_ai_content_cached(summary: str, prompt: str, models: list) -> dict:
-    """Cached wrapper for AI content generation (4 hour TTL)."""
-    return generate_ai_content(summary, prompt, models)
+# get_ai_content_cached has been removed in favor of non-blocking persistent caching
 
 
 # --- Render Functions ---
@@ -809,19 +811,8 @@ def render_activity_feed(data: pd.DataFrame) -> None:
     )
 
 
-def render_ai_section(data: pd.DataFrame) -> None:
+def render_ai_section(data: pd.DataFrame, ai_insights: dict) -> None:
     """Render the AI-powered insights and fun facts section."""
-    # Initialize AI data on first load
-    if "ai_data" not in st.session_state:
-        if get_client():
-            data_summary = get_data_summary(data)
-            st.session_state["ai_data"] = get_ai_content_cached(
-                data_summary, SYSTEM_PROMPT, MODELS_TO_TRY
-            )
-        else:
-            st.session_state["ai_data"] = {}
-
-    ai_data = st.session_state.get("ai_data", {})
     manual_facts = get_manual_fun_facts(data)
 
     if get_client():
@@ -829,31 +820,46 @@ def render_ai_section(data: pd.DataFrame) -> None:
         with col_title:
             st.subheader("Summary")
         with col_btn:
-            if st.button("🔄", help="Refresh insights for current filters"):
-                with st.spinner("Refreshing..."):
-                    data_summary = get_data_summary(data)
-                    st.session_state["ai_data"] = get_ai_content_cached(
-                        data_summary, SYSTEM_PROMPT, MODELS_TO_TRY
-                    )
+            if st.button("🔄", help="Trigger non-blocking background refresh for AI insights"):
+                clear_ai_cache()
+                st.session_state["force_refresh_ai"] = True
                 st.rerun()
 
+        # Display background status message if currently fetching
+        if ai_insights.get("status") == "fetching":
+            st.info("⏳ *The coach is compiling new insights in the background. Rerun or interact to update...*")
+        
         st.info(
-            ai_data.get("insight", "The coach is currently judging you in silence.")
+            ai_insights.get("insight", "The coach is currently observing you in silence...")
         )
 
         st.subheader("Key Insights")
-        ai_facts = ai_data.get("facts", [])
+        ai_facts = ai_insights.get("facts", [])
         if ai_facts and not any(
-            "Error" in f or "AI is being shy" in f for f in ai_facts
+            "Error" in f or "AI is being shy" in f or "analyzing" in f.lower() for f in ai_facts
         ):
             for fact in ai_facts:
                 st.write(f"• {fact}")
-        elif not ai_facts:
+        else:
             for fact in random.sample(manual_facts, min(3, len(manual_facts))):
                 st.write(f"• {fact}")
 
-        if "model" in ai_data:
-            st.caption(f"Generated with: {ai_data['model']}")
+        # Construct visual metadata caption
+        meta = []
+        if "model" in ai_insights and ai_insights["model"] != "None (Pending)":
+            meta.append(f"Model: {ai_insights['model']}")
+        if "generated_at" in ai_insights:
+            try:
+                gen_time = datetime.datetime.fromisoformat(ai_insights["generated_at"])
+                meta.append(f"Updated: {gen_time.strftime('%I:%M %p, %b %d')}")
+            except:
+                pass
+        
+        if ai_insights.get("status") == "fetching":
+            meta.append("Syncing...")
+            
+        if meta:
+            st.caption(" | ".join(meta))
     else:
         st.subheader("Insights")
         st.info(
@@ -886,9 +892,10 @@ def render_sidebar(df: pd.DataFrame) -> tuple:
     if st.sidebar.button(
         "Force Refresh AI",
         width="stretch",
-        help="Clear the 4-hour cache and fetch fresh AI content.",
+        help="Trigger background generation of fresh AI roasts and headlines.",
     ):
-        get_ai_content_cached.clear()
+        clear_ai_cache()
+        st.session_state["force_refresh_ai"] = True
         st.rerun()
 
     st.sidebar.divider()
@@ -1062,6 +1069,20 @@ def main():
         df, date_range, selected_teams, selected_types, selected_names
     )
 
+    # Fetch AI Content (Non-Blocking)
+    data_summary = get_data_summary(df)
+    force_refresh_ai = st.session_state.get("force_refresh_ai", False)
+    
+    ai_insights = get_ai_insights_non_blocking(
+        data_summary, SYSTEM_PROMPT, MODELS_TO_TRY, force_refresh=force_refresh_ai
+    )
+    ai_headlines = get_ai_headlines_non_blocking(
+        data_summary, SYSTEM_PROMPT, MODELS_TO_TRY, force_refresh=force_refresh_ai
+    )
+    
+    if force_refresh_ai:
+        st.session_state["force_refresh_ai"] = False
+
     # Reserve space for breaking news ticker
     ticker_placeholder = st.empty()
 
@@ -1116,16 +1137,9 @@ def main():
     # Activity Feed
     render_activity_feed(filtered_df)
 
-    # AI Section (Rendered Last)
-    data_summary = get_data_summary(df)
-    with st.spinner("Analyzing recent activities..."):
-        ai_data = get_ai_content_cached(
-            data_summary, SYSTEM_PROMPT, tuple(MODELS_TO_TRY)
-        )
-
     # Inject Ticker into top placeholder
-    if ai_data and "headlines" in ai_data:
-        headlines = ai_data["headlines"]
+    if ai_headlines and "headlines" in ai_headlines:
+        headlines = ai_headlines["headlines"]
         if isinstance(headlines, list):
             base_str = " &nbsp;&nbsp;&nbsp;&bull;&nbsp;&nbsp;&nbsp; ".join(headlines)
         else:
@@ -1146,7 +1160,7 @@ def main():
         )
 
     with ai_placeholder.container():
-        render_ai_section(df)
+        render_ai_section(df, ai_insights)
 
 
 if __name__ == "__main__":

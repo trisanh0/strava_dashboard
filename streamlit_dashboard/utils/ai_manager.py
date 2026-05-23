@@ -1,17 +1,44 @@
 """
-AI Manager - Handles all AI/LLM interactions for the dashboard.
+AI Manager - Handles all AI/LLM interactions for the dashboard with persistent caching.
 """
 
 import json
 import os
-
+import hashlib
+import datetime
+import threading
 import streamlit as st
 from dotenv import load_dotenv
 from google import genai
 
-from config import FALLBACK_RESPONSE, MODELS_TO_TRY, SYSTEM_PROMPT
+from config import (
+    FALLBACK_RESPONSE,
+    MODELS_TO_TRY,
+    SYSTEM_PROMPT,
+    AI_INSIGHTS_CACHE_FILE,
+    AI_HEADLINES_CACHE_FILE,
+    AI_INSIGHTS_TTL_HOURS,
+    AI_HEADLINES_TTL_HOURS,
+    AI_MIN_REFRESH_INTERVAL_HOURS,
+)
 
 load_dotenv()
+
+# --- Absolute Cache File Paths ---
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+INSIGHTS_CACHE_PATH = os.path.join(BASE_DIR, AI_INSIGHTS_CACHE_FILE)
+HEADLINES_CACHE_PATH = os.path.join(BASE_DIR, AI_HEADLINES_CACHE_FILE)
+
+# --- Global State for Background Thread Safety ---
+_insights_fetching_lock = threading.Lock()
+_headlines_fetching_lock = threading.Lock()
+_file_lock = threading.Lock()
+
+_is_insights_fetching = False
+_is_headlines_fetching = False
+
+_last_insights_attempt = datetime.datetime.min
+_last_headlines_attempt = datetime.datetime.min
 
 
 # --- Helper Functions ---
@@ -31,81 +58,321 @@ def get_client() -> genai.Client | None:
     return genai.Client(api_key=api_key)
 
 
-def _extract_json(text: str) -> dict | None:
-    """Extract and parse JSON from a text response."""
-    try:
-        start = text.find("{")
-        end = text.rfind("}") + 1
-        if start != -1 and end > start:
-            return json.loads(text[start:end])
-    except (json.JSONDecodeError, ValueError):
-        pass
-    return None
+def _load_cache(file_path: str) -> dict | None:
+    """Safely load cache from a JSON file, using a global lock."""
+    with _file_lock:
+        if not os.path.exists(file_path):
+            return None
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error reading cache {file_path}: {e}")
+            return None
 
 
-def _build_prompt(summary: str, system_prompt: str) -> str:
-    """Build the full prompt for AI content generation."""
+def _save_cache(file_path: str, data: dict) -> bool:
+    """Safely save data to a JSON cache file, using a global lock."""
+    with _file_lock:
+        try:
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4, ensure_ascii=False)
+            return True
+        except Exception as e:
+            print(f"Error writing cache to {file_path}: {e}")
+            return False
+
+
+def clear_ai_cache():
+    """Clear persistent AI cache files to force refresh."""
+    global _last_insights_attempt, _last_headlines_attempt
+    with _file_lock:
+        for p in [INSIGHTS_CACHE_PATH, HEADLINES_CACHE_PATH]:
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except Exception as e:
+                    print(f"Error deleting cache {p}: {e}")
+    # Reset attempt tracking
+    _last_insights_attempt = datetime.datetime.min
+    _last_headlines_attempt = datetime.datetime.min
+
+
+def _build_insights_prompt(summary: str, system_prompt: str) -> str:
+    """Build the insights prompt (roast + facts)."""
     return (
         f"{system_prompt}\n\n"
         f"Data Summary:\n{summary}\n\n"
         "Tasks:\n"
         "1. For 'insight': One brutal roast of the group (use your coach persona)\n"
-        "2. For 'facts': 3 genuine, data-driven insights about trends, comparisons, or patterns (be entirely analytical, no snark)\n"
-        "3. For 'headlines': A list of exactly 6 funny, sensationalised news ticker snippets poking fun at specific recent activities, as well as individual/team/group progress. Do not include 'Breaking:' or similar."
-        "Avoid using the same person for more than 2 headlines. Use the 'Recent Specific Activities' data to report on exact events.\n\n"
-        "Return a valid JSON object with exactly these three keys: 'insight', 'facts', and 'headlines'."
+        "2. For 'facts': 3 genuine, data-driven insights about trends, comparisons, or patterns (be entirely analytical, no snark)\n\n"
+        "Return a valid JSON object with exactly these two keys: 'insight' and 'facts'."
     )
 
 
-# --- Public Functions ---
-def generate_ai_content(
-    summary: str, system_prompt: str = SYSTEM_PROMPT, models: list = MODELS_TO_TRY
-) -> dict:
-    """
-    Generate AI content based on the data summary.
+def _build_headlines_prompt(summary: str, system_prompt: str) -> str:
+    """Build the headlines prompt (funny ticker snippets)."""
+    return (
+        f"{system_prompt}\n\n"
+        f"Data Summary:\n{summary}\n\n"
+        "Tasks:\n"
+        "For 'headlines': A list of exactly 6 funny, sensationalised news ticker snippets poking fun at specific recent activities, as well as individual/team/group progress. Do not include 'Breaking:' or similar. "
+        "Avoid using the same person for more than 2 headlines. Use the 'Recent Specific Activities' data to report on exact events.\n\n"
+        "Return a valid JSON object with exactly one key: 'headlines' containing a list of these 6 strings."
+    )
 
-    Tries models in order, falling back if one fails.
 
-    Args:
-        summary: Text summary of the activity data.
-
-    Returns:
-        Dictionary with 'facts', 'insight', and 'model' keys.
-    """
+# --- Background Worker Thread Targets ---
+def _fetch_insights_worker(
+    summary: str, system_prompt: str, models: list, summary_hash: str
+):
+    """Background worker to fetch AI insights."""
+    global _is_insights_fetching, _last_insights_attempt
     client = get_client()
     if not client:
-        return {}
+        with _insights_fetching_lock:
+            _is_insights_fetching = False
+        return
 
-    prompt = _build_prompt(summary, system_prompt)
+    prompt = _build_insights_prompt(summary, system_prompt)
+    success = False
 
     for model_name in models:
         try:
-            print(f"Attempting with model: {model_name}")
+            print(f"[BG] Attempting insights with model: {model_name}")
             response = client.models.generate_content(
                 model=model_name,
                 contents=prompt,
+                config={"response_mime_type": "application/json"},
             )
             text = response.text
-            print(f"Response from {model_name}: {text[:100]}...")
+            print(f"[BG] Insights response received successfully.")
 
-            parsed = _extract_json(text)
-            if parsed:
-                parsed["model"] = model_name
-                return parsed
-
-            # Fallback: treat raw text as insight if JSON parsing failed
-            if text:
-                print(
-                    f"JSON parsing failed for {model_name}, falling back to raw text."
-                )
-                return {
-                    "facts": ["AI was too creative to list facts."],
-                    "insight": text,
-                    "model": model_name,
+            parsed = json.loads(text)
+            if isinstance(parsed, dict) and "insight" in parsed and "facts" in parsed:
+                cache_data = {
+                    "timestamp": datetime.datetime.now().isoformat(),
+                    "summary_hash": summary_hash,
+                    "content": {
+                        "insight": parsed["insight"],
+                        "facts": parsed["facts"],
+                        "model": model_name,
+                    },
                 }
-
+                _save_cache(INSIGHTS_CACHE_PATH, cache_data)
+                success = True
+                break
         except Exception as e:
-            print(f"Error with model {model_name}: {e}")
+            print(f"[BG] Error with insights model {model_name}: {e}")
             continue
 
-    return FALLBACK_RESPONSE
+    with _insights_fetching_lock:
+        _is_insights_fetching = False
+        if not success:
+            _last_insights_attempt = datetime.datetime.now()
+
+
+def _fetch_headlines_worker(
+    summary: str, system_prompt: str, models: list, summary_hash: str
+):
+    """Background worker to fetch AI headlines."""
+    global _is_headlines_fetching, _last_headlines_attempt
+    client = get_client()
+    if not client:
+        with _headlines_fetching_lock:
+            _is_headlines_fetching = False
+        return
+
+    prompt = _build_headlines_prompt(summary, system_prompt)
+    success = False
+
+    for model_name in models:
+        try:
+            print(f"[BG] Attempting headlines with model: {model_name}")
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config={"response_mime_type": "application/json"},
+            )
+            text = response.text
+            print(f"[BG] Headlines response received successfully.")
+
+            parsed = json.loads(text)
+            if isinstance(parsed, dict) and "headlines" in parsed:
+                cache_data = {
+                    "timestamp": datetime.datetime.now().isoformat(),
+                    "summary_hash": summary_hash,
+                    "content": {
+                        "headlines": parsed["headlines"],
+                        "model": model_name,
+                    },
+                }
+                _save_cache(HEADLINES_CACHE_PATH, cache_data)
+                success = True
+                break
+        except Exception as e:
+            print(f"[BG] Error with headlines model {model_name}: {e}")
+            continue
+
+    with _headlines_fetching_lock:
+        _is_headlines_fetching = False
+        if not success:
+            _last_headlines_attempt = datetime.datetime.now()
+
+
+# --- Public Entrypoints ---
+def get_ai_insights_non_blocking(
+    summary: str,
+    system_prompt: str = SYSTEM_PROMPT,
+    models: list = MODELS_TO_TRY,
+    force_refresh: bool = False,
+) -> dict:
+    """
+    Get AI insights (roast + facts) instantly from persistent cache.
+    If stale or missing, kicks off a background thread to fetch fresh content.
+    """
+    global _is_insights_fetching, _last_insights_attempt
+
+    summary_hash = hashlib.sha256(summary.encode("utf-8")).hexdigest()
+    cache = _load_cache(INSIGHTS_CACHE_PATH)
+
+    needs_refresh = False
+
+    if not cache:
+        needs_refresh = True
+    else:
+        try:
+            timestamp = datetime.datetime.fromisoformat(cache["timestamp"])
+            age_hours = (datetime.datetime.now() - timestamp).total_seconds() / 3600.0
+            hash_changed = cache.get("summary_hash") != summary_hash
+
+            if age_hours >= AI_INSIGHTS_TTL_HOURS or hash_changed:
+                needs_refresh = True
+        except Exception:
+            needs_refresh = True
+
+    if needs_refresh or force_refresh:
+        now = datetime.datetime.now()
+        time_since_cache_hours = 999.0
+        if cache and "timestamp" in cache:
+            try:
+                time_since_cache_hours = (
+                    now - datetime.datetime.fromisoformat(cache["timestamp"])
+                ).total_seconds() / 3600.0
+            except:
+                pass
+
+        time_since_attempt_sec = (now - _last_insights_attempt).total_seconds()
+
+        allow_refresh = (
+            force_refresh
+            or not cache
+            or (
+                time_since_cache_hours >= AI_MIN_REFRESH_INTERVAL_HOURS
+                and time_since_attempt_sec >= 300
+            )
+        )
+
+        if allow_refresh:
+            with _insights_fetching_lock:
+                if not _is_insights_fetching:
+                    _is_insights_fetching = True
+                    thread = threading.Thread(
+                        target=_fetch_insights_worker,
+                        args=(summary, system_prompt, models, summary_hash),
+                        daemon=True,
+                    )
+                    thread.start()
+
+    if cache and "content" in cache:
+        res = dict(cache["content"])
+        res["status"] = "fetching" if _is_insights_fetching else "success"
+        res["generated_at"] = cache.get("timestamp")
+        return res
+
+    return {
+        "insight": "The coach is currently observing you in silence...",
+        "facts": ["AI is analyzing your activities..."],
+        "model": "None (Pending)",
+        "status": "fetching",
+    }
+
+
+def get_ai_headlines_non_blocking(
+    summary: str,
+    system_prompt: str = SYSTEM_PROMPT,
+    models: list = MODELS_TO_TRY,
+    force_refresh: bool = False,
+) -> dict:
+    """
+    Get AI headlines instantly from persistent cache.
+    If stale or missing, kicks off a background thread to fetch fresh content.
+    """
+    global _is_headlines_fetching, _last_headlines_attempt
+
+    summary_hash = hashlib.sha256(summary.encode("utf-8")).hexdigest()
+    cache = _load_cache(HEADLINES_CACHE_PATH)
+
+    needs_refresh = False
+
+    if not cache:
+        needs_refresh = True
+    else:
+        try:
+            timestamp = datetime.datetime.fromisoformat(cache["timestamp"])
+            age_hours = (datetime.datetime.now() - timestamp).total_seconds() / 3600.0
+            hash_changed = cache.get("summary_hash") != summary_hash
+
+            if age_hours >= AI_HEADLINES_TTL_HOURS or hash_changed:
+                needs_refresh = True
+        except Exception:
+            needs_refresh = True
+
+    if needs_refresh or force_refresh:
+        now = datetime.datetime.now()
+        time_since_cache_hours = 999.0
+        if cache and "timestamp" in cache:
+            try:
+                time_since_cache_hours = (
+                    now - datetime.datetime.fromisoformat(cache["timestamp"])
+                ).total_seconds() / 3600.0
+            except:
+                pass
+
+        time_since_attempt_sec = (now - _last_headlines_attempt).total_seconds()
+
+        allow_refresh = (
+            force_refresh
+            or not cache
+            or (
+                time_since_cache_hours >= AI_MIN_REFRESH_INTERVAL_HOURS
+                and time_since_attempt_sec >= 300
+            )
+        )
+
+        if allow_refresh:
+            with _headlines_fetching_lock:
+                if not _is_headlines_fetching:
+                    _is_headlines_fetching = True
+                    thread = threading.Thread(
+                        target=_fetch_headlines_worker,
+                        args=(summary, system_prompt, models, summary_hash),
+                        daemon=True,
+                    )
+                    thread.start()
+
+    if cache and "content" in cache:
+        res = dict(cache["content"])
+        res["status"] = "fetching" if _is_headlines_fetching else "success"
+        res["generated_at"] = cache.get("timestamp")
+        return res
+
+    return {
+        "headlines": [
+            "AI coach is checking the tape...",
+            "Stand by for sensational fitness gossip...",
+        ],
+        "model": "None (Pending)",
+        "status": "fetching",
+    }
