@@ -43,6 +43,8 @@ NUMERIC_COLUMNS = ["Distance (km)", "Effort", "Time (min)", "Elevation (m)"]
 TEAM_COLORS = {
     "Team Ravi": "#1f77b4",    # Darker blue
     "Team Srikar": "#aec7e8",  # Lighter blue
+    "Ravi": "#1f77b4",         # Fallback
+    "Srikar": "#aec7e8",       # Fallback
 }
 
 # --- UI Constants ---
