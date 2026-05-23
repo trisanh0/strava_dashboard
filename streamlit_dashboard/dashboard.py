@@ -28,7 +28,6 @@ from config import (
     N_SIMULATIONS,
     SYSTEM_PROMPT,
     MODELS_TO_TRY,
-    TEAM_COLORS,
 )
 
 st.set_page_config(page_title="Sleep Comp Fitness Comp", page_icon="🏃", layout="wide")
@@ -276,11 +275,7 @@ def _render_team_bar_chart(stats: pd.DataFrame) -> None:
                 title=None,
                 axis=alt.Axis(labelFontSize=13, tickSize=0, domain=False),
             ),
-            color=alt.Color(
-                "Team:N",
-                scale=alt.Scale(domain=list(TEAM_COLORS.keys()), range=list(TEAM_COLORS.values())),
-                legend=None,
-            ),
+            color=alt.Color("Team:N", legend=None),
             tooltip=[
                 alt.Tooltip("Team:N"),
                 alt.Tooltip("Effort:Q", format=".1f"),
@@ -355,11 +350,7 @@ def render_win_probability(df: pd.DataFrame, today: datetime.date) -> None:
             .mark_arc(innerRadius=60)
             .encode(
                 theta=alt.Theta(field="Probability", type="quantitative"),
-                color=alt.Color(
-                    field="Team",
-                    type="nominal",
-                    scale=alt.Scale(domain=list(TEAM_COLORS.keys()), range=list(TEAM_COLORS.values())),
-                ),
+                color=alt.Color(field="Team"),
                 tooltip=["Team", alt.Tooltip("Probability", format=".1%")],
                 order=alt.Order("Probability", sort="descending"),
             )
@@ -403,9 +394,6 @@ def render_team_effort_chart(data: pd.DataFrame) -> None:
             alt.Tooltip("Gap:Q", format=".1f", title="Gap"),
         ]
 
-        color_team1 = TEAM_COLORS.get(team1, "#1f77b4")
-        color_team2 = TEAM_COLORS.get(team2, "#aec7e8")
-
         area_chart = (
             alt.Chart(pivot_df)
             .mark_area(opacity=0.2)
@@ -415,8 +403,8 @@ def render_team_effort_chart(data: pd.DataFrame) -> None:
                 y2=alt.Y2(f"{team2}:Q"),
                 color=alt.condition(
                     f"datum['{team1}'] > datum['{team2}']",
-                    alt.value(color_team1),
-                    alt.value(color_team2),
+                    alt.value("#1f77b4"),
+                    alt.value("#ff7f0e"),
                 ),
                 tooltip=shared_tooltip,
             )
@@ -428,7 +416,7 @@ def render_team_effort_chart(data: pd.DataFrame) -> None:
             .encode(
                 x=alt.X("Date:T", title=None),
                 y=alt.Y("Cumulative Effort:Q", title="Effort"),
-                color=alt.Color("Team:N", scale=alt.Scale(domain=list(TEAM_COLORS.keys()), range=list(TEAM_COLORS.values()))),
+                color=alt.Color("Team:N"),
                 tooltip=shared_tooltip,
             )
         )
@@ -440,7 +428,7 @@ def render_team_effort_chart(data: pd.DataFrame) -> None:
             .encode(
                 x=alt.X("Date:T", title=None),
                 y=alt.Y("Cumulative Effort:Q", title="Effort"),
-                color=alt.Color("Team:N", scale=alt.Scale(domain=list(TEAM_COLORS.keys()), range=list(TEAM_COLORS.values()))),
+                color=alt.Color("Team:N"),
                 tooltip=["Date", "Team", "Cumulative Effort"],
             )
         )
@@ -464,7 +452,7 @@ def _render_standings_chart(stats: pd.DataFrame) -> None:
                 title=None,
                 axis=alt.Axis(labelFontSize=12, tickSize=0, domain=False),
             ),
-            color=alt.Color("Team:N", scale=alt.Scale(domain=list(TEAM_COLORS.keys()), range=list(TEAM_COLORS.values()))),
+            color=alt.Color("Team:N"),
             tooltip=[
                 alt.Tooltip("Name:N"),
                 alt.Tooltip("Team:N"),
