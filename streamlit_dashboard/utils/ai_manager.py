@@ -349,7 +349,7 @@ def get_ai_insights_non_blocking(
         return res
 
     return {
-        "insight": "The coach is currently observing you in silence...",
+        "insight": "Generating AI insights...",
         "facts": [],
         "model": "None (Pending)",
         "status": "fetching",

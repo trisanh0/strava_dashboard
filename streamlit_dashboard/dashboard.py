@@ -810,21 +810,23 @@ def render_activity_feed(data: pd.DataFrame) -> None:
 def render_ai_section(data: pd.DataFrame, ai_insights: dict) -> None:
     """Render the AI-powered insights and fun facts section."""
     if get_client():
-        col_title, col_btn = st.columns([10, 1])
+        col_title, col_btn = st.columns([10, 2])
         with col_title:
             st.subheader("Summary")
         with col_btn:
-            if st.button("🔄", help="Trigger non-blocking background refresh for AI insights"):
+            if st.button("Refresh", help="Trigger non-blocking background refresh for AI insights"):
                 clear_ai_cache()
                 st.session_state["force_refresh_ai"] = True
                 st.rerun()
 
         # Display background status message if currently fetching
         if ai_insights.get("status") == "fetching":
-            st.info("⏳ *The coach is compiling new insights in the background. Rerun or interact to update...*")
+            current_insight = ai_insights.get("insight", "")
+            if current_insight != "Generating AI insights...":
+                st.info("Refreshing AI insights in the background. Please refresh or interact to update.")
         
         st.info(
-            ai_insights.get("insight", "The coach is currently observing you in silence...")
+            ai_insights.get("insight", "Generating AI insights...")
         )
 
         ai_facts = ai_insights.get("facts", [])

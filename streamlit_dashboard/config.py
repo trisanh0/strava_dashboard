@@ -103,7 +103,7 @@ Member descriptions:
 
 FALLBACK_RESPONSE = {
     "facts": [],
-    "insight": "All AI models are currently exhausted trying to calculate your effort.",
+    "insight": "AI service is currently unavailable. Please try again later.",
     "headlines": [
         "Trisan messes up a basic API call yet again",
         "Srikar eats another fatass meal",
