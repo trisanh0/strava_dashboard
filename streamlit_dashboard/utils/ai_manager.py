@@ -350,7 +350,7 @@ def get_ai_insights_non_blocking(
 
     return {
         "insight": "The coach is currently observing you in silence...",
-        "facts": ["AI is analyzing your activities..."],
+        "facts": [],
         "model": "None (Pending)",
         "status": "fetching",
     }
@@ -426,10 +426,7 @@ def get_ai_headlines_non_blocking(
         return res
 
     return {
-        "headlines": [
-            "AI coach is checking the tape...",
-            "Stand by for sensational fitness gossip...",
-        ],
+        "headlines": FALLBACK_RESPONSE["headlines"],
         "model": "None (Pending)",
         "status": "fetching",
     }

@@ -4,7 +4,6 @@ Main entry point for the Streamlit application.
 """
 
 import datetime
-import random
 
 import altair as alt
 import numpy as np
