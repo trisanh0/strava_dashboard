@@ -843,10 +843,18 @@ def render_ai_section(data: pd.DataFrame, ai_insights: dict) -> None:
             meta.append(f"Model: {ai_insights['model']}")
         if "generated_at" in ai_insights:
             try:
+                from zoneinfo import ZoneInfo
                 gen_time = datetime.datetime.fromisoformat(ai_insights["generated_at"])
-                meta.append(f"Updated: {gen_time.strftime('%I:%M %p, %b %d')}")
+                if gen_time.tzinfo is None:
+                    gen_time = gen_time.replace(tzinfo=datetime.timezone.utc)
+                local_time = gen_time.astimezone(ZoneInfo("Pacific/Auckland"))
+                meta.append(f"Updated: {local_time.strftime('%I:%M %p, %b %d')}")
             except:
-                pass
+                try:
+                    gen_time = datetime.datetime.fromisoformat(ai_insights["generated_at"])
+                    meta.append(f"Updated: {gen_time.strftime('%I:%M %p, %b %d')}")
+                except:
+                    pass
         
         if ai_insights.get("status") == "fetching":
             meta.append("Syncing...")

@@ -176,7 +176,7 @@ def _fetch_insights_worker(
 
             if isinstance(parsed, dict) and "insight" in parsed and "facts" in parsed:
                 cache_data = {
-                    "timestamp": datetime.datetime.now().isoformat(),
+                    "timestamp": datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat(),
                     "summary_hash": summary_hash,
                     "content": {
                         "insight": parsed["insight"],
@@ -194,10 +194,10 @@ def _fetch_insights_worker(
     with _insights_fetching_lock:
         _is_insights_fetching = False
         if not success:
-            _last_insights_attempt = datetime.datetime.now()
+            _last_insights_attempt = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
             # Save fallback to cache to prevent indefinite loading/fetching states
             fallback_cache = {
-                "timestamp": datetime.datetime.now().isoformat(),
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat(),
                 "summary_hash": summary_hash,
                 "content": {
                     "insight": FALLBACK_RESPONSE["insight"],
@@ -248,7 +248,7 @@ def _fetch_headlines_worker(
 
             if isinstance(parsed, dict) and "headlines" in parsed:
                 cache_data = {
-                    "timestamp": datetime.datetime.now().isoformat(),
+                    "timestamp": datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat(),
                     "summary_hash": summary_hash,
                     "content": {
                         "headlines": parsed["headlines"],
@@ -265,10 +265,10 @@ def _fetch_headlines_worker(
     with _headlines_fetching_lock:
         _is_headlines_fetching = False
         if not success:
-            _last_headlines_attempt = datetime.datetime.now()
+            _last_headlines_attempt = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
             # Save fallback to cache to prevent indefinite loading/fetching states
             fallback_cache = {
-                "timestamp": datetime.datetime.now().isoformat(),
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat(),
                 "summary_hash": summary_hash,
                 "content": {
                     "headlines": FALLBACK_RESPONSE["headlines"],
@@ -301,7 +301,7 @@ def get_ai_insights_non_blocking(
     else:
         try:
             timestamp = datetime.datetime.fromisoformat(cache["timestamp"])
-            age_hours = (datetime.datetime.now() - timestamp).total_seconds() / 3600.0
+            age_hours = (datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - timestamp).total_seconds() / 3600.0
             hash_changed = cache.get("summary_hash") != summary_hash
 
             if age_hours >= AI_INSIGHTS_TTL_HOURS or hash_changed:
@@ -310,7 +310,7 @@ def get_ai_insights_non_blocking(
             needs_refresh = True
 
     if needs_refresh or force_refresh:
-        now = datetime.datetime.now()
+        now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
         time_since_cache_hours = 999.0
         if cache and "timestamp" in cache:
             try:
@@ -378,7 +378,7 @@ def get_ai_headlines_non_blocking(
     else:
         try:
             timestamp = datetime.datetime.fromisoformat(cache["timestamp"])
-            age_hours = (datetime.datetime.now() - timestamp).total_seconds() / 3600.0
+            age_hours = (datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - timestamp).total_seconds() / 3600.0
             hash_changed = cache.get("summary_hash") != summary_hash
 
             if age_hours >= AI_HEADLINES_TTL_HOURS or hash_changed:
@@ -387,7 +387,7 @@ def get_ai_headlines_non_blocking(
             needs_refresh = True
 
     if needs_refresh or force_refresh:
-        now = datetime.datetime.now()
+        now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
         time_since_cache_hours = 999.0
         if cache and "timestamp" in cache:
             try:
