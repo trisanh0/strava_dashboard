@@ -158,9 +158,6 @@ def run_monte_carlo_simulation(
     return win_probs
 
 
-# get_ai_content_cached has been removed in favor of non-blocking persistent caching
-
-
 # --- Render Functions ---
 def render_activity_heatmap(data: pd.DataFrame) -> None:
     """Render the effort heatmap showing daily effort."""
