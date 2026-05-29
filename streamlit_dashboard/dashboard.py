@@ -810,14 +810,7 @@ def render_activity_feed(data: pd.DataFrame) -> None:
 def render_ai_section(data: pd.DataFrame, ai_insights: dict) -> None:
     """Render the AI-powered insights and fun facts section."""
     if get_client():
-        col_title, col_btn = st.columns([10, 2])
-        with col_title:
-            st.subheader("Summary")
-        with col_btn:
-            if st.button("Refresh", help="Trigger non-blocking background refresh for AI insights"):
-                clear_ai_cache()
-                st.session_state["force_refresh_ai"] = True
-                st.rerun()
+        st.subheader("Summary")
 
         # Display background status message if currently fetching
         if ai_insights.get("status") == "fetching":
@@ -884,7 +877,7 @@ def render_sidebar(df: pd.DataFrame) -> tuple:
             st.rerun()
 
     if st.sidebar.button(
-        "Force Refresh AI",
+        "Refresh AI",
         width="stretch",
         help="Trigger background generation of fresh AI roasts and headlines.",
     ):
