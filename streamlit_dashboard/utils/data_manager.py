@@ -65,22 +65,3 @@ Recent Specific Activities:
 {recent_activities}
 """
 
-
-def get_manual_fun_facts(dataframe: pd.DataFrame) -> list[str]:
-    """Return a list of manually calculated fun facts based on the dataframe."""
-    if dataframe.empty:
-        return ["No data to calculate fun facts."]
-
-    total_km = dataframe["Distance (km)"].sum()
-    total_elevation = dataframe["Elevation (m)"].sum()
-    total_time_min = dataframe["Time (min)"].sum()
-
-    return [
-        f"**{total_km / 42.195:.1f}** marathons worth of distance 🏃",
-        f"**{total_km / 1600:.2f}x** the length of New Zealand 🇳🇿",
-        f"**{(total_km / 69420) * 100:.4f}%** of the way around your mom 🤰",
-        f"**{total_elevation / 328:.1f}** times the Auckland Sky Tower 🗼",
-        f"**{total_elevation / 8848:.2f}** Mount Everests climbed 🏔️",
-        f"**{total_time_min / 480:.1f}** full 8-hour work days 💼",
-        f"**{total_time_min / 22:.1f}** episodes of Friends ☕️",
-    ]

@@ -17,7 +17,7 @@ from utils.ai_manager import (
     clear_ai_cache,
     get_client,
 )
-from utils.data_manager import get_data_summary, get_manual_fun_facts, load_data
+from utils.data_manager import get_data_summary, load_data
 
 from config import (
     COMPETITION_END_DATE,
@@ -813,8 +813,6 @@ def render_activity_feed(data: pd.DataFrame) -> None:
 
 def render_ai_section(data: pd.DataFrame, ai_insights: dict) -> None:
     """Render the AI-powered insights and fun facts section."""
-    manual_facts = get_manual_fun_facts(data)
-
     if get_client():
         col_title, col_btn = st.columns([10, 1])
         with col_title:
@@ -833,15 +831,12 @@ def render_ai_section(data: pd.DataFrame, ai_insights: dict) -> None:
             ai_insights.get("insight", "The coach is currently observing you in silence...")
         )
 
-        st.subheader("Key Insights")
         ai_facts = ai_insights.get("facts", [])
         if ai_facts and not any(
             "Error" in f or "AI is being shy" in f or "analyzing" in f.lower() for f in ai_facts
         ):
+            st.subheader("Key Insights")
             for fact in ai_facts:
-                st.write(f"• {fact}")
-        else:
-            for fact in random.sample(manual_facts, min(3, len(manual_facts))):
                 st.write(f"• {fact}")
 
         # Construct visual metadata caption
@@ -862,14 +857,7 @@ def render_ai_section(data: pd.DataFrame, ai_insights: dict) -> None:
             st.caption(" | ".join(meta))
     else:
         st.subheader("Insights")
-        st.info(
-            "\n\n".join(
-                [
-                    f"• {fact}"
-                    for fact in random.sample(manual_facts, min(3, len(manual_facts)))
-                ]
-            )
-        )
+        st.info("Gemini API Error")
 
 
 def render_sidebar(df: pd.DataFrame) -> tuple:
