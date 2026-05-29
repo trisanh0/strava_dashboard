@@ -129,7 +129,7 @@ def _build_headlines_prompt(summary: str, system_prompt: str) -> str:
         f"{system_prompt}\n\n"
         f"Data Summary:\n{summary}\n\n"
         "Tasks:\n"
-        "For 'headlines': A list of six funny, sensationalised news ticker snippets poking fun at specific recent activities, as well as individual/team/group progress. Do not include 'Breaking:' or similar. Do not include periods."
+        "For 'headlines': A list of six funny, sensationalised news ticker snippets poking fun at specific recent activities, as well as individual/team/group progress. Do not include 'Breaking:' or similar. Do not include periods. Do not use the personality used for the other generated content."
         "Avoid using the same person for more than two headlines. Use the 'Recent Specific Activities' data to report on exact events.\n\n"
         "Return a valid JSON object with exactly one key: 'headlines' containing a list of these six strings."
     )
