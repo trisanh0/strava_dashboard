@@ -25,10 +25,23 @@ function getTeam(firstName) {
 }
 
 /**
+ * Gets the multiplier for an activity, with special rules for certain athletes.
+ */
+function getMultiplier(type, name, pace) {
+  if (SPECIAL_MULTIPLIERS[name] && SPECIAL_MULTIPLIERS[name][type]) {
+    const rule = SPECIAL_MULTIPLIERS[name][type];
+    if (pace > rule.threshold) {
+      return rule.multiplier;
+    }
+  }
+  return MULTIPLIERS[type] || 0.0;
+}
+
+/**
  * Calculates weighted distance based on the activity type multiplier.
  */
-function getEffectiveDistance(distKm, type) {
-  const multiplier = MULTIPLIERS[type] || 0.0;
+function getEffectiveDistance(distKm, type, name, pace) {
+  const multiplier = getMultiplier(type, name, pace);
   return Number((distKm * multiplier).toFixed(2));
 }
 

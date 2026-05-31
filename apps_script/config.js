@@ -40,6 +40,16 @@ const MULTIPLIERS = {
   'Workout': 0.3
 };
 
+// Special rules that apply to specific athletes based on activity details (e.g. pace)
+const SPECIAL_MULTIPLIERS = {
+  'Srikar': {
+    'Run': {
+      threshold: 9.0, // pace > 9.0
+      multiplier: 0.6
+    }
+  }
+};
+
 const DISCORD_COLOR = 15548997; // Strava-esque Orange/Red
 
 const DISCORD_PHRASES = [

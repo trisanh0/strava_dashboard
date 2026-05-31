@@ -42,11 +42,11 @@ function fetchClubActivities() {
             const dateStr = act.start_date_local || act.start_date;
             const date = dateStr ? new Date(dateStr) : new Date();
             const distKm = (act.distance || 0) / 1000;
-            const effectiveDistKm = getEffectiveDistance(distKm, act.type);
             const durationMin = (act.moving_time || 0) / 60;
             const paceDecimal = distKm > 0 ? Number((durationMin / distKm).toFixed(2)) : 0;
             const firstName = toTitleCase(act.athlete.firstname);
             const team = getTeam(firstName);
+            const effectiveDistKm = getEffectiveDistance(distKm, act.type, firstName, paceDecimal);
 
             return [
                 uniqueId, firstName, team, date,
@@ -88,7 +88,7 @@ function sendDiscordNotification(newActivities) {
 
     const embeds = filteredActivities.map(act => {
         const [id, name, team, date, dist, effDist, duration, pace, elevation, type] = act;
-        const multiplier = MULTIPLIERS[type] || 0.0;
+        const multiplier = getMultiplier(type, name, pace);
 
         return {
             color: DISCORD_COLOR,
