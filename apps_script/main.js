@@ -106,6 +106,11 @@ function sendDiscordNotification(newActivities) {
     });
 
     for (let i = 0; i < filteredActivities.length; i++) {
+        // Pre-request delay: 2s between messages to stay within 5 req/2s bucket
+        if (i > 0) {
+            Utilities.sleep(2000);
+        }
+
         const act = filteredActivities[i];
         const name = act[1];
         const type = act[9];
@@ -137,48 +142,55 @@ function sendDiscordNotification(newActivities) {
             try {
                 const response = UrlFetchApp.fetch(DISCORD_WEBHOOK_URL, options);
                 const responseCode = response.getResponseCode();
+                const headers = response.getHeaders();
 
                 if (responseCode >= 200 && responseCode < 300) {
                     success = true;
-                    Utilities.sleep(1000); // Standard delay between requests
+
+                    // Proactive throttle: if the bucket is nearly exhausted, wait for it to reset
+                    const remaining = headers['X-RateLimit-Remaining'] || headers['x-ratelimit-remaining'];
+                    const resetAfter = headers['X-RateLimit-Reset-After'] || headers['x-ratelimit-reset-after'];
+                    if (remaining !== undefined && parseInt(remaining, 10) <= 1 && resetAfter) {
+                        const resetMs = Math.round(parseFloat(resetAfter) * 1000) + 500;
+                        Logger.log(`Bucket nearly empty (${remaining} remaining). Waiting ${resetMs}ms for reset.`);
+                        Utilities.sleep(resetMs);
+                    }
                 } else if (responseCode === 429) {
-                    let waitTime = 2000; // Default wait time if header is missing
-                    const headers = response.getHeaders();
-                    
+                    // retry_after is always a float in seconds (per Discord docs)
+                    let waitMs = 2000; // Default fallback
+
                     try {
                         const body = JSON.parse(response.getContentText());
                         if (body.retry_after) {
-                            // Discord sometimes returns seconds (3.17) and sometimes ms (3170)
-                            waitTime = body.retry_after < 1000 ? body.retry_after * 1000 : body.retry_after;
+                            waitMs = Math.round(body.retry_after * 1000);
                         }
                     } catch (e) {
-                        // Fallback to headers
+                        // Fallback to Retry-After header (also in seconds)
                         const retryAfterHeader = headers['Retry-After'] || headers['retry-after'];
                         if (retryAfterHeader) {
-                            const val = parseFloat(retryAfterHeader);
-                            waitTime = val < 100 ? val * 1000 : val; 
+                            waitMs = Math.round(parseFloat(retryAfterHeader) * 1000);
                         }
                     }
                     
-                    waitTime = Math.round(waitTime + 500); // Add 500ms buffer
-                    if (waitTime > 15000) waitTime = 15000; // Cap at 15s to avoid GAS execution limits
+                    waitMs += 500; // Buffer to avoid edge-of-window retries
+                    if (waitMs > 30000) waitMs = 30000; // Cap at 30s to stay within GAS limits
                     
-                    Logger.log(`Rate limited (429). Retrying in ${waitTime}ms... (Attempt ${retries + 1}/${maxRetries + 1})`);
-                    Utilities.sleep(waitTime);
+                    Logger.log(`Rate limited (429). Waiting ${waitMs}ms before retry... (Attempt ${retries + 1}/${maxRetries + 1})`);
+                    Utilities.sleep(waitMs);
                     retries++;
                 } else {
                     Logger.log(`Unexpected Discord error: ${responseCode} - ${response.getContentText()}`);
-                    break; // Break on other HTTP errors (400, 401, etc.)
+                    break;
                 }
             } catch (e) {
                 Logger.log(`Fetch error during Discord notification: ${e.message}`);
-                Utilities.sleep(2000 * (retries + 1)); // Backoff on network errors
+                Utilities.sleep(2000 * (retries + 1));
                 retries++;
             }
         }
         
         if (!success) {
-            Logger.log(`Failed to send notification for ${name} after multiple attempts.`);
+            Logger.log(`Failed to send notification for ${name} after ${retries} attempts.`);
         }
     }
     Logger.log(`Finished processing Discord notifications.`);
