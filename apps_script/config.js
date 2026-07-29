@@ -4,10 +4,49 @@
  */
 
 const props = PropertiesService.getScriptProperties();
-const CLIENT_ID = props.getProperty('CLIENT_ID');
-const CLIENT_SECRET = props.getProperty('CLIENT_SECRET');
+const CLIENT_ID = props.getProperty('CLIENT_ID') || props.getProperty('CLIENT_ID_1');
+const CLIENT_SECRET = props.getProperty('CLIENT_SECRET') || props.getProperty('CLIENT_SECRET_1');
+const CLIENT_ID_2 = props.getProperty('CLIENT_ID_2') || CLIENT_ID;
+const CLIENT_SECRET_2 = props.getProperty('CLIENT_SECRET_2') || CLIENT_SECRET;
 const CLUB_ID = props.getProperty('CLUB_ID');
 const DISCORD_WEBHOOK_URL = props.getProperty('DISCORD_WEBHOOK_URL');
+
+/**
+ * Returns API credentials for specified app ID (1 or 2).
+ */
+function getApiCredentials(appId) {
+  if (String(appId) === '2') {
+    return { clientId: CLIENT_ID_2, clientSecret: CLIENT_SECRET_2 };
+  }
+  return { clientId: CLIENT_ID, clientSecret: CLIENT_SECRET };
+}
+
+/**
+ * Retrieves all saved athlete tokens from ScriptProperties.
+ * Returns array of { athleteId, firstName, lastName, refreshToken, appId }.
+ */
+function getStoredAthletes() {
+  const allProps = props.getProperties();
+  const athletes = [];
+  for (const key in allProps) {
+    if (key.startsWith('ATHLETE_TOKEN_')) {
+      try {
+        const data = JSON.parse(allProps[key]);
+        athletes.push(data);
+      } catch (e) {
+        Logger.log(`Error parsing ${key}: ${e.message}`);
+      }
+    }
+  }
+  return athletes;
+}
+
+/**
+ * Saves athlete token data to ScriptProperties.
+ */
+function saveAthleteToken(athleteId, tokenData) {
+  props.setProperty(`ATHLETE_TOKEN_${athleteId}`, JSON.stringify(tokenData));
+}
 
 const DISCORD_IDS = {
   'Srikar': '258466487012950018',
