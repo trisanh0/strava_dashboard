@@ -118,7 +118,11 @@ function sendDiscordNotification(newActivities) {
         const discordId = DISCORD_IDS[name];
         const mention = (discordId && discordId !== '') ? `<@${discordId}>` : name;
 
-        const randomMessage = DISCORD_PHRASES[Math.floor(Math.random() * DISCORD_PHRASES.length)]
+        const phrases = (name === 'Srikar' && typeof SRIKAR_DISCORD_PHRASES !== 'undefined' && SRIKAR_DISCORD_PHRASES.length > 0)
+            ? SRIKAR_DISCORD_PHRASES
+            : DISCORD_PHRASES;
+
+        const randomMessage = phrases[Math.floor(Math.random() * phrases.length)]
             .replace('{name}', mention)
             .replace('{type}', type);
 

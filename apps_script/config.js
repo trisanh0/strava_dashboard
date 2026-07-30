@@ -87,3 +87,16 @@ const DISCORD_PHRASES = [
   "The prophecy has been fulfilled: {name} achieved greatness in a {type}!",
   "With pure determination, {name} finished a {type} today!"
 ];
+
+const SRIKAR_DISCORD_PHRASES = [
+  "{name} somehow waddled through a {type}! AUT degree clearly putting in work.",
+  "{name} finished a {type}! Time to celebrate with another fatass meal.",
+  "{name} attempted a {type}. Still won't get you into UoA or the U24 team though.",
+  "Miracle of the day: {name} survived a {type} instead of playing games with Jared.",
+  "{name} logged a {type}! Almost as embarrassing as his golf game.",
+  "{name} completed a {type}! Wilco is still better at frisbee though.",
+  "{name} dragged himself through a {type}! Back to AUT lectures you go.",
+  "{name} actually did a {type}! Did Jared cheer you on the whole time?",
+  "{name} finished a {type}! Still can't hit a golf ball straight to save his life."
+];
+
