@@ -278,6 +278,20 @@ def _fetch_headlines_worker(
             _save_cache(HEADLINES_CACHE_PATH, fallback_cache)
 
 
+def _is_cache_expired(cache: dict | None, ttl_hours: float, current_hash: str) -> bool:
+    """Check if cache is missing, summary hash changed, or TTL has elapsed."""
+    if not cache or "content" not in cache or "timestamp" not in cache:
+        return True
+    if cache.get("summary_hash") != current_hash:
+        return True
+    try:
+        cached_time = datetime.datetime.fromisoformat(cache["timestamp"])
+        now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+        return (now - cached_time).total_seconds() > ttl_hours * 3600
+    except Exception:
+        return True
+
+
 # --- Public Entrypoints ---
 def get_ai_insights_non_blocking(
     summary: str,
@@ -287,17 +301,24 @@ def get_ai_insights_non_blocking(
 ) -> dict:
     """
     Get AI insights (roast + facts) instantly from persistent cache.
-    If force_refresh is True, kicks off a background thread to fetch fresh content.
+    Auto-triggers background thread if cache is missing, expired, or force_refresh is True.
     """
     global _is_insights_fetching, _last_insights_attempt
 
     summary_hash = hashlib.sha256(summary.encode("utf-8")).hexdigest()
     cache = _load_cache(INSIGHTS_CACHE_PATH)
+    expired = _is_cache_expired(cache, AI_INSIGHTS_TTL_HOURS, summary_hash)
 
-    if force_refresh:
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    recent_attempt = (now - _last_insights_attempt).total_seconds() < (
+        AI_MIN_REFRESH_INTERVAL_HOURS * 3600
+    )
+
+    if (force_refresh or expired) and not recent_attempt:
         with _insights_fetching_lock:
             if not _is_insights_fetching:
                 _is_insights_fetching = True
+                _last_insights_attempt = now
                 thread = threading.Thread(
                     target=_fetch_insights_worker,
                     args=(summary, system_prompt, models, summary_hash),
@@ -311,19 +332,11 @@ def get_ai_insights_non_blocking(
         res["generated_at"] = cache.get("timestamp")
         return res
 
-    if _is_insights_fetching:
-        return {
-            "insight": "Generating AI insights...",
-            "facts": [],
-            "model": "None (Pending)",
-            "status": "fetching",
-        }
-
     return {
-        "insight": "AI insights are inactive. Click 'Refresh AI' in the sidebar to generate.",
+        "insight": "Generating AI insights...",
         "facts": [],
-        "model": "None",
-        "status": "success",
+        "model": "None (Pending)",
+        "status": "fetching",
     }
 
 
@@ -335,17 +348,24 @@ def get_ai_headlines_non_blocking(
 ) -> dict:
     """
     Get AI headlines instantly from persistent cache.
-    If force_refresh is True, kicks off a background thread to fetch fresh content.
+    Auto-triggers background thread if cache is missing, expired, or force_refresh is True.
     """
     global _is_headlines_fetching, _last_headlines_attempt
 
     summary_hash = hashlib.sha256(summary.encode("utf-8")).hexdigest()
     cache = _load_cache(HEADLINES_CACHE_PATH)
+    expired = _is_cache_expired(cache, AI_HEADLINES_TTL_HOURS, summary_hash)
 
-    if force_refresh:
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    recent_attempt = (now - _last_headlines_attempt).total_seconds() < (
+        AI_MIN_REFRESH_INTERVAL_HOURS * 3600
+    )
+
+    if (force_refresh or expired) and not recent_attempt:
         with _headlines_fetching_lock:
             if not _is_headlines_fetching:
                 _is_headlines_fetching = True
+                _last_headlines_attempt = now
                 thread = threading.Thread(
                     target=_fetch_headlines_worker,
                     args=(summary, system_prompt, models, summary_hash),
@@ -359,19 +379,9 @@ def get_ai_headlines_non_blocking(
         res["generated_at"] = cache.get("timestamp")
         return res
 
-    if _is_headlines_fetching:
-        return {
-            "headlines": FALLBACK_RESPONSE["headlines"],
-            "model": "None (Pending)",
-            "status": "fetching",
-        }
-
     return {
         "headlines": FALLBACK_RESPONSE["headlines"],
-        "model": "None",
-        "status": "success",
+        "model": "None (Pending)",
+        "status": "fetching",
     }
 
-
-# Clear persistent cache once when the app server process reboots/starts up
-clear_ai_cache()

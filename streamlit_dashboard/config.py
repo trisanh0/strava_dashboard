@@ -56,9 +56,10 @@ MODELS_TO_TRY = ["gemma-4-31b-it"]
 # --- AI Cache Configuration ---
 AI_INSIGHTS_CACHE_FILE = "ai_insights_cache.json"
 AI_HEADLINES_CACHE_FILE = "ai_headlines_cache.json"
-AI_INSIGHTS_TTL_HOURS = 24
-AI_HEADLINES_TTL_HOURS = 2
-AI_MIN_REFRESH_INTERVAL_HOURS = 1  # Rate-limiting safety buffer (in hours) between API calls
+AI_INSIGHTS_TTL_HOURS = 2
+AI_HEADLINES_TTL_HOURS = 0.5
+AI_MIN_REFRESH_INTERVAL_HOURS = 0.1  # Rate-limiting safety buffer (in hours) between API calls
+
 
 
 SYSTEM_PROMPT = """
