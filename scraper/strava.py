@@ -106,11 +106,18 @@ class StravaClubScraper:
             if res.status_code == 200:
                 try:
                     data = res.json()
+                    if isinstance(data, dict):
+                        logger.info(f"XHR JSON response top-level keys: {list(data.keys())}")
+                    else:
+                        logger.info(f"XHR JSON response type: {type(data)} - {str(data)[:200]}")
                     activities = self._parse_json_feed(data)
                     if activities:
                         logger.info(f"Successfully parsed {len(activities)} activities from JSON endpoint.")
                         return activities
-                except ValueError:
+                    else:
+                        logger.warning(f"XHR returned JSON but _parse_json_feed matched 0 entries. Sample data: {str(data)[:400]}")
+                except Exception as json_err:
+                    logger.info(f"XHR is HTML (len {len(res.text)}). Sample: {res.text[:300].strip()}")
                     activities = self._parse_html_feed(res.text)
                     if activities:
                         logger.info(f"Successfully parsed {len(activities)} activities from XHR HTML.")
@@ -135,6 +142,13 @@ class StravaClubScraper:
                     return activities
                 else:
                     logger.warning(f"Club page loaded ({len(res.text)} bytes) but 0 activities matched feed selectors.")
+                    # Log a snippet of the HTML body to understand DOM structure
+                    soup = BeautifulSoup(res.text, "html.parser")
+                    feed_div = soup.select_one("div.feed, div.recent-activities, div.activity-feed, main")
+                    if feed_div:
+                        logger.info(f"Feed container snippet: {str(feed_div)[:500]}")
+                    else:
+                        logger.info(f"Body snippet: {str(soup.body)[:500] if soup.body else res.text[:500]}")
             else:
                 logger.error(f"Failed to load club page. HTTP status {res.status_code}")
         except Exception as e:
