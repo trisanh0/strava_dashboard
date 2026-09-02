@@ -131,8 +131,9 @@ class StravaClubScraper:
             logger.warning("STRAVA_SESSION_COOKIE is empty. Session cookie needed for private club data.")
 
         candidate_urls = [
-            f"https://www.strava.com/dashboard/feed?feed_type=club&club_id={self.club_id}",
+            f"https://www.strava.com/clubs/{self.club_id}/feed?feed_type=club&club_id={self.club_id}",
             f"https://www.strava.com/clubs/{self.club_id}/feed",
+            f"https://www.strava.com/dashboard/feed?feed_type=club&club_id={self.club_id}",
             f"https://www.strava.com/clubs/{self.club_id}/recent_activity",
             f"https://www.strava.com/clubs/{self.club_id}"
         ]
@@ -175,17 +176,101 @@ class StravaClubScraper:
         return []
 
     def _parse_json_feed(self, data: Any) -> List[Dict[str, Any]]:
-        """Parses Strava internal JSON feed models if returned."""
+        """Parses Strava internal JSON feed models and modern entry structures."""
         activities = []
         entries = []
 
         if isinstance(data, dict):
-            entries = data.get("models") or data.get("activities") or []
+            entries = data.get("entries") or data.get("models") or data.get("activities") or []
         elif isinstance(data, list):
             entries = data
 
         for item in entries:
             try:
+                # Handle modern feed entry: { "entity": "Activity", "activity": { ... } }
+                if isinstance(item, dict) and item.get("activity"):
+                    act = item["activity"]
+                    if item.get("entity") and item["entity"] != "Activity":
+                        continue
+
+                    athlete = act.get("athlete") or {}
+                    first_name = to_title_case(athlete.get("firstName") or athlete.get("athleteName", "").split()[0])
+                    last_name = " ".join(athlete.get("athleteName", "").split()[1:]) if len(athlete.get("athleteName", "").split()) > 1 else ""
+                    
+                    activity_type = act.get("type") or "Workout"
+                    title = act.get("activityName") or activity_type
+                    activity_id = str(act.get("id") or "")
+                    date_str = act.get("startDate") or datetime.now(timezone.utc).isoformat()
+
+                    dist_km = 0.0
+                    duration_min = 0.0
+                    pace = 0.0
+                    elevation = 0.0
+
+                    # Parse stats array: [{ "key": "stat_one", "value": "..." }, { "key": "stat_one_subtitle", "value": "Distance" }]
+                    stats = act.get("stats", [])
+                    stat_map = {}
+                    for s in stats:
+                        k = s.get("key")
+                        v = s.get("value") or ""
+                        if k and v:
+                            stat_map[k] = v
+
+                    for prefix in ["stat_one", "stat_two", "stat_three", "stat_four"]:
+                        sub_key = f"{prefix}_subtitle"
+                        val_key = prefix
+                        if sub_key in stat_map and val_key in stat_map:
+                            subtitle = stat_map[sub_key].lower()
+                            val_raw = stat_map[val_key]
+                            val_clean = re.sub(r"<[^>]+>", " ", val_raw).strip()
+
+                            if "dist" in subtitle:
+                                if "meter" in val_clean.lower() or " m" in val_clean.lower():
+                                    dist_km = round(clean_number(val_clean.replace(",", "")) / 1000.0, 2)
+                                else:
+                                    dist_km = clean_number(val_clean)
+                            elif "elev" in subtitle:
+                                elevation = clean_number(val_clean)
+                            elif "time" in subtitle:
+                                duration_min = parse_duration_string(val_clean)
+                            elif "pace" in subtitle:
+                                p_match = re.search(r"(\d+):(\d{2})", val_clean)
+                                if p_match:
+                                    pace = round(float(p_match.group(1)) + float(p_match.group(2)) / 60.0, 2)
+                                else:
+                                    pace = clean_number(val_clean)
+
+                    if duration_min == 0.0 and act.get("elapsedTime"):
+                        duration_min = round(float(act["elapsedTime"]) / 60.0, 2)
+
+                    if pace == 0.0 and dist_km > 0 and duration_min > 0:
+                        pace = round(duration_min / dist_km, 2)
+
+                    team = get_team(first_name)
+                    eff_dist = get_effective_distance(dist_km, activity_type, first_name, pace)
+
+                    athlete_key = f"{first_name}_{last_name}".replace(" ", "_")
+                    dist_meters = int(round(dist_km * 1000))
+                    duration_sec = int(round(duration_min * 60))
+                    unique_id = f"{athlete_key}_{dist_meters}_{duration_sec}_{title}".replace(" ", "_")
+
+                    activities.append({
+                        "unique_id": unique_id,
+                        "first_name": first_name,
+                        "team": team,
+                        "date": date_str,
+                        "distance_km": dist_km,
+                        "effective_distance_km": eff_dist,
+                        "duration_min": duration_min,
+                        "pace": pace,
+                        "elevation": elevation,
+                        "activity_type": activity_type,
+                        "title": title,
+                        "activity_id": activity_id
+                    })
+                    continue
+
+                # Handle legacy / API-like JSON models
                 athlete = item.get("athlete") or {}
                 first_name = to_title_case(athlete.get("firstname") or item.get("athlete_name", "").split()[0])
                 last_name = athlete.get("lastname") or ""
