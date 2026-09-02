@@ -17,6 +17,48 @@ logging.basicConfig(
 logger = logging.getLogger("strava_scraper")
 
 
+class DuplicateChecker:
+    def __init__(self, existing_id_list):
+        self.exact_set = set(str(eid).strip() for eid in existing_id_list if eid)
+        self.parsed_list = []
+        for eid in existing_id_list:
+            parts = str(eid).strip().split("_")
+            if len(parts) >= 5:
+                try:
+                    first = parts[0].strip().lower()
+                    dist = float(parts[2])
+                    time_sec = float(parts[3])
+                    title = "_".join(parts[4:]).strip().lower()
+                    self.parsed_list.append({
+                        "first": first,
+                        "dist": dist,
+                        "time": time_sec,
+                        "title": title
+                    })
+                except ValueError:
+                    pass
+
+    def is_duplicate(self, act: dict) -> bool:
+        uid = act["unique_id"]
+        if uid in self.exact_set:
+            return True
+
+        first = act["first_name"].strip().lower()
+        title = act["title"].replace(" ", "_").strip().lower()
+        dist_m = act["distance_km"] * 1000.0
+        time_s = act["duration_min"] * 60.0
+
+        for existing in self.parsed_list:
+            if existing["first"] == first and existing["title"] == title:
+                dist_diff = abs(existing["dist"] - dist_m)
+                time_diff = abs(existing["time"] - time_s)
+                if (time_diff <= 120 or time_diff / max(existing["time"], 1) <= 0.05) or \
+                   (dist_diff <= 150 or dist_diff / max(existing["dist"], 1) <= 0.08):
+                    return True
+
+        return False
+
+
 def run_scrape_cycle() -> int:
     """Executes a single scrape, deduplication, sheet update, and Discord notification cycle."""
     logger.info("Starting Strava scraping cycle...")
@@ -27,6 +69,7 @@ def run_scrape_cycle() -> int:
 
     # 1. Fetch existing activity IDs from Google Sheet
     existing_ids = sheet_sync.get_existing_ids()
+    dup_checker = DuplicateChecker(existing_ids)
 
     # 2. Scrape recent club activities from Strava
     scraped_activities = scraper.fetch_recent_activities()
@@ -40,7 +83,7 @@ def run_scrape_cycle() -> int:
 
     for act in scraped_activities:
         uid = act["unique_id"]
-        if uid not in existing_ids and uid not in seen_ids:
+        if not dup_checker.is_duplicate(act) and uid not in seen_ids:
             new_activities.append(act)
             seen_ids.add(uid)
 

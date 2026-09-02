@@ -62,43 +62,54 @@ def parse_duration_string(time_str: str) -> float:
     return round(total_minutes, 2)
 
 
+def format_date_mm_dd_yyyy(date_str: str) -> str:
+    """Formats ISO date string into M/D/YYYY format (e.g. 8/28/2026) for Google Sheets."""
+    if not date_str:
+        now = datetime.now(timezone.utc)
+        return f"{now.month}/{now.day}/{now.year}"
+    try:
+        clean_iso = date_str.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(clean_iso)
+        return f"{dt.month}/{dt.day}/{dt.year}"
+    except Exception:
+        pass
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        return f"{dt.month}/{dt.day}/{dt.year}"
+    except Exception:
+        pass
+    return date_str
+
+
 def parse_relative_date(date_text: str) -> str:
-    """Parses relative and standard date text from Strava feed into ISO 8601 string."""
+    """Parses relative and standard date text from Strava feed into M/D/YYYY string."""
     now = datetime.now(timezone.utc)
     if not date_text:
-        return now.isoformat()
+        return f"{now.month}/{now.day}/{now.year}"
 
     text = date_text.strip().lower()
 
-    # Extract time like "11:34" or "7:15 am"
-    time_match = re.search(r"(\d{1,2}):(\d{2})(?:\s*(am|pm))?", text)
-    hour = 12
-    minute = 0
-    if time_match:
-        hour = int(time_match.group(1))
-        minute = int(time_match.group(2))
-        ampm = time_match.group(3)
-        if ampm == "pm" and hour < 12:
-            hour += 12
-        elif ampm == "am" and hour == 12:
-            hour = 0
-
     if "today" in text:
-        dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        return dt.isoformat()
+        return f"{now.month}/{now.day}/{now.year}"
     elif "yesterday" in text:
-        dt = (now - timedelta(days=1)).replace(hour=hour, minute=minute, second=0, microsecond=0)
-        return dt.isoformat()
+        dt = now - timedelta(days=1)
+        return f"{dt.month}/{dt.day}/{dt.year}"
 
     # Format like "August 30, 2026 at 11:34" or "Aug 30 at 11:34"
     try:
-        cleaned = re.sub(r"\s+at\s+", " ", date_text.strip())
-        dt = datetime.strptime(cleaned, "%B %d, %Y %H:%M")
-        return dt.replace(tzinfo=timezone.utc).isoformat()
+        cleaned = re.sub(r"\s+at\s+.*", "", date_text.strip())
+        for fmt in ["%B %d, %Y", "%B %d", "%b %d, %Y", "%b %d"]:
+            try:
+                dt = datetime.strptime(cleaned, fmt)
+                if dt.year == 1900:
+                    dt = dt.replace(year=now.year)
+                return f"{dt.month}/{dt.day}/{dt.year}"
+            except Exception:
+                continue
     except Exception:
         pass
 
-    return now.isoformat()
+    return f"{now.month}/{now.day}/{now.year}"
 
 
 class StravaClubScraper:
@@ -249,16 +260,17 @@ class StravaClubScraper:
                     team = get_team(first_name)
                     eff_dist = get_effective_distance(dist_km, activity_type, first_name, pace)
 
-                    athlete_key = f"{first_name}_{last_name}".replace(" ", "_")
+                    athlete_key = f"{first_name}_{last_name[0].upper()}." if last_name else first_name
                     dist_meters = int(round(dist_km * 1000))
                     duration_sec = int(round(duration_min * 60))
                     unique_id = f"{athlete_key}_{dist_meters}_{duration_sec}_{title}".replace(" ", "_")
+                    formatted_date = format_date_mm_dd_yyyy(date_str)
 
                     activities.append({
                         "unique_id": unique_id,
                         "first_name": first_name,
                         "team": team,
-                        "date": date_str,
+                        "date": formatted_date,
                         "distance_km": dist_km,
                         "effective_distance_km": eff_dist,
                         "duration_min": duration_min,
@@ -285,8 +297,9 @@ class StravaClubScraper:
                 team = get_team(first_name)
                 eff_dist = get_effective_distance(dist_km, activity_type, first_name, pace)
 
-                date_str = item.get("start_date_local") or item.get("start_date") or datetime.now(timezone.utc).isoformat()
-                athlete_key = f"{first_name}_{last_name}".replace(" ", "_")
+                date_str = item.get("start_date_local") or item.get("start_date") or ""
+                formatted_date = format_date_mm_dd_yyyy(date_str)
+                athlete_key = f"{first_name}_{last_name[0].upper()}." if last_name else first_name
                 dist_meters = int(round(dist_km * 1000))
                 duration_sec = int(round(duration_min * 60))
                 unique_id = f"{athlete_key}_{dist_meters}_{duration_sec}_{title}".replace(" ", "_")
@@ -295,7 +308,7 @@ class StravaClubScraper:
                     "unique_id": unique_id,
                     "first_name": first_name,
                     "team": team,
-                    "date": date_str,
+                    "date": formatted_date,
                     "distance_km": dist_km,
                     "effective_distance_km": eff_dist,
                     "duration_min": duration_min,
@@ -404,7 +417,7 @@ class StravaClubScraper:
                 time_elem = card.select_one("[data-testid='date_at_time'], time, .timestamp")
                 date_str = parse_relative_date(time_elem.get_text(strip=True) if time_elem else "")
 
-                athlete_key = f"{first_name}_{last_name}".replace(" ", "_")
+                athlete_key = f"{first_name}_{last_name[0].upper()}." if last_name else first_name
                 dist_meters = int(round(dist_km * 1000))
                 duration_sec = int(round(duration_min * 60))
                 unique_id = f"{athlete_key}_{dist_meters}_{duration_sec}_{title}".replace(" ", "_")
