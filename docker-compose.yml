@@ -1,10 +1,14 @@
 services:
-  strava-dashboard:
-    build: .
-    container_name: strava-dashboard
+  strava-scraper:
+    build:
+      context: .
+      dockerfile: scraper/Dockerfile
+    container_name: strava-scraper
     restart: unless-stopped
-    ports:
-      - "8501:8501"
     environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-
+      - STRAVA_CLUB_ID=${STRAVA_CLUB_ID:-1346373}
+      - STRAVA_SESSION_COOKIE=${STRAVA_SESSION_COOKIE:-}
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
+      - SHEET_WEBHOOK_URL=${SHEET_WEBHOOK_URL:-}
+      - WEBHOOK_SECRET_KEY=${WEBHOOK_SECRET_KEY:-sleep-comp-secret-key}
+      - POLL_INTERVAL_MINUTES=${POLL_INTERVAL_MINUTES:-60}
