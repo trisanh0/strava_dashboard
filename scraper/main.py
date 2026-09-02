@@ -52,9 +52,17 @@ class DuplicateChecker:
             if existing["first"] == first and existing["title"] == title:
                 dist_diff = abs(existing["dist"] - dist_m)
                 time_diff = abs(existing["time"] - time_s)
-                if (time_diff <= 120 or time_diff / max(existing["time"], 1) <= 0.05) or \
-                   (dist_diff <= 150 or dist_diff / max(existing["dist"], 1) <= 0.08):
-                    return True
+
+                # For distance-based activities, both dist and duration must closely match
+                if existing["dist"] > 0 and dist_m > 0:
+                    dist_close = (dist_diff <= 50 or dist_diff / max(existing["dist"], 1) <= 0.03)
+                    time_close = (time_diff <= 60 or time_diff / max(existing["time"], 1) <= 0.03)
+                    if (dist_close and time_close) or (time_diff <= 10 and dist_diff <= 150):
+                        return True
+                # For non-distance activities (e.g. Strength/Weights), duration must be identical (within 30s)
+                elif existing["dist"] == 0 and dist_m == 0:
+                    if time_diff <= 30:
+                        return True
 
         return False
 
