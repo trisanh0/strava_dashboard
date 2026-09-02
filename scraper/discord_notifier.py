@@ -1,6 +1,7 @@
 import logging
 import random
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 import requests
 
@@ -61,6 +62,9 @@ class DiscordNotifier:
         phrase_template = random.choice(DISCORD_PHRASES)
         message_content = phrase_template.replace("{name}", mention).replace("{type}", activity_type)
 
+        # Discord requires valid ISO-8601 format for embed timestamp
+        iso_timestamp = datetime.now(timezone.utc).isoformat()
+
         embed = {
             "color": DISCORD_COLOR,
             "fields": [
@@ -72,7 +76,7 @@ class DiscordNotifier:
                 {"name": "Elevation", "value": f"{elevation:.0f} m", "inline": True},
                 {"name": "Team", "value": team, "inline": True},
             ],
-            "timestamp": act.get("date", "")
+            "timestamp": iso_timestamp
         }
 
         payload = {

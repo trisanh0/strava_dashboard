@@ -17,56 +17,6 @@ logging.basicConfig(
 logger = logging.getLogger("strava_scraper")
 
 
-class DuplicateChecker:
-    def __init__(self, existing_id_list):
-        self.exact_set = set(str(eid).strip() for eid in existing_id_list if eid)
-        self.parsed_list = []
-        for eid in existing_id_list:
-            parts = str(eid).strip().split("_")
-            if len(parts) >= 5:
-                try:
-                    first = parts[0].strip().lower()
-                    dist = float(parts[2])
-                    time_sec = float(parts[3])
-                    title = "_".join(parts[4:]).strip().lower()
-                    self.parsed_list.append({
-                        "first": first,
-                        "dist": dist,
-                        "time": time_sec,
-                        "title": title
-                    })
-                except ValueError:
-                    pass
-
-    def is_duplicate(self, act: dict) -> bool:
-        uid = act["unique_id"]
-        if uid in self.exact_set:
-            return True
-
-        first = act["first_name"].strip().lower()
-        title = act["title"].replace(" ", "_").strip().lower()
-        dist_m = act["distance_km"] * 1000.0
-        time_s = act["duration_min"] * 60.0
-
-        for existing in self.parsed_list:
-            if existing["first"] == first and existing["title"] == title:
-                dist_diff = abs(existing["dist"] - dist_m)
-                time_diff = abs(existing["time"] - time_s)
-
-                # For distance-based activities, both dist and duration must closely match
-                if existing["dist"] > 0 and dist_m > 0:
-                    dist_close = (dist_diff <= 50 or dist_diff / max(existing["dist"], 1) <= 0.03)
-                    time_close = (time_diff <= 60 or time_diff / max(existing["time"], 1) <= 0.03)
-                    if (dist_close and time_close) or (time_diff <= 10 and dist_diff <= 150):
-                        return True
-                # For non-distance activities (e.g. Strength/Weights), duration must be identical (within 30s)
-                elif existing["dist"] == 0 and dist_m == 0:
-                    if time_diff <= 30:
-                        return True
-
-        return False
-
-
 def run_scrape_cycle() -> int:
     """Executes a single scrape, deduplication, sheet update, and Discord notification cycle."""
     logger.info("Starting Strava scraping cycle...")
@@ -77,7 +27,7 @@ def run_scrape_cycle() -> int:
 
     # 1. Fetch existing activity IDs from Google Sheet
     existing_ids = sheet_sync.get_existing_ids()
-    dup_checker = DuplicateChecker(existing_ids)
+    existing_ids_set = set(str(eid).strip() for eid in existing_ids if eid)
 
     # 2. Scrape recent club activities from Strava
     scraped_activities = scraper.fetch_recent_activities()
@@ -85,13 +35,13 @@ def run_scrape_cycle() -> int:
         logger.info("No activities returned from Strava club feed.")
         return 0
 
-    # 3. Deduplicate
+    # 3. Deduplicate by exact unique_id matching (identical to original Apps Script)
     new_activities = []
     seen_ids = set()
 
     for act in scraped_activities:
         uid = act["unique_id"]
-        if dup_checker.is_duplicate(act):
+        if uid in existing_ids_set:
             logger.info(f"Duplicate (already logged): {uid}")
         elif uid in seen_ids:
             logger.info(f"Duplicate in current batch: {uid}")
