@@ -73,27 +73,26 @@ class StravaClubScraper:
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/128.0.0.0 Safari/537.36"
             ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
         })
 
         if self.session_cookie:
-            # Handle cookie if passed as full string or just value
-            if "=" in self.session_cookie:
-                for part in self.session_cookie.split(";"):
-                    if "=" in part:
-                        k, v = part.strip().split("=", 1)
-                        self.session.cookies.set(k, v, domain=".strava.com")
-            else:
-                self.session.cookies.set("_strava4_session", self.session_cookie, domain=".strava.com")
+            # Set direct Cookie header for 100% reliable domain attachment
+            cookie_header = self.session_cookie
+            if not any(k in cookie_header for k in ["_strava4_session", "="]):
+                cookie_header = f"_strava4_session={self.session_cookie}"
+            self.session.headers["Cookie"] = cookie_header
 
     def fetch_recent_activities(self) -> List[Dict[str, Any]]:
         """
         Fetches recent activities from the Strava club page.
-        Attempts both JSON recent_activity endpoint and HTML feed parsing.
+        Attempts JSON recent_activity endpoint, feed endpoints, and HTML feed parsing.
         """
         if not self.session_cookie:
-            logger.warning("STRAVA_SESSION_COOKIE is empty. Fetching public club page...")
+            logger.warning("STRAVA_SESSION_COOKIE is empty. Session cookie needed for private club data.")
 
+        # Attempt 1: Recent Activity JSON/XHR endpoint
         url_json = f"https://www.strava.com/clubs/{self.club_id}/recent_activity"
         headers_xhr = {
             "Accept": "application/json, text/javascript, */*; q=0.01",
@@ -101,24 +100,21 @@ class StravaClubScraper:
             "Referer": f"https://www.strava.com/clubs/{self.club_id}",
         }
 
-        # Attempt 1: Recent Activity JSON/XHR endpoint
         try:
             res = self.session.get(url_json, headers=headers_xhr, timeout=15)
+            logger.info(f"XHR endpoint {url_json} -> HTTP {res.status_code}")
             if res.status_code == 200:
                 try:
                     data = res.json()
                     activities = self._parse_json_feed(data)
                     if activities:
-                        logger.info(f"Successfully scraped {len(activities)} activities from JSON endpoint.")
+                        logger.info(f"Successfully parsed {len(activities)} activities from JSON endpoint.")
                         return activities
                 except ValueError:
-                    # Returned HTML instead of JSON
                     activities = self._parse_html_feed(res.text)
                     if activities:
-                        logger.info(f"Successfully scraped {len(activities)} activities from XHR HTML response.")
+                        logger.info(f"Successfully parsed {len(activities)} activities from XHR HTML.")
                         return activities
-            else:
-                logger.debug(f"XHR endpoint returned status {res.status_code}. Falling back to main club page.")
         except Exception as e:
             logger.warning(f"Error requesting XHR endpoint: {e}")
 
@@ -126,10 +122,19 @@ class StravaClubScraper:
         url_main = f"https://www.strava.com/clubs/{self.club_id}"
         try:
             res = self.session.get(url_main, timeout=15)
+            logger.info(f"Main club page {url_main} -> HTTP {res.status_code} (Final URL: {res.url})")
+            
+            if "login" in res.url.lower():
+                logger.error("Strava redirected to login page! Your STRAVA_SESSION_COOKIE is invalid, expired, or missing.")
+                return []
+
             if res.status_code == 200:
                 activities = self._parse_html_feed(res.text)
-                logger.info(f"Successfully scraped {len(activities)} activities from main club page.")
-                return activities
+                if activities:
+                    logger.info(f"Successfully parsed {len(activities)} activities from main club page.")
+                    return activities
+                else:
+                    logger.warning(f"Club page loaded ({len(res.text)} bytes) but 0 activities matched feed selectors.")
             else:
                 logger.error(f"Failed to load club page. HTTP status {res.status_code}")
         except Exception as e:
@@ -190,12 +195,28 @@ class StravaClubScraper:
         soup = BeautifulSoup(html_content, "html.parser")
         activities = []
 
+        # Check for embedded Preact / React data-props (used in modern Strava web app)
+        for preact_div in soup.select("div[data-props], div[data-react-props]"):
+            props_str = preact_div.get("data-props") or preact_div.get("data-react-props")
+            if props_str and ("activity" in props_str.lower() or "athlete" in props_str.lower()):
+                try:
+                    import json
+                    parsed_props = json.loads(props_str)
+                    extracted = self._parse_json_feed(parsed_props)
+                    if extracted:
+                        activities.extend(extracted)
+                except Exception:
+                    pass
+
+        if activities:
+            return activities
+
         # Look for activity container elements in feed
         activity_cards = soup.select(
-            "div.activity, div[data-testid='web-feed-entry'], div.entry-container, div.feed-entry"
+            "div.activity, div[data-testid='web-feed-entry'], div.entry-container, div.feed-entry, div.activity-container"
         )
         if not activity_cards:
-            activity_cards = soup.select("ul.feed li, div.recent-activities-list > div")
+            activity_cards = soup.select("ul.feed li, div.recent-activities-list > div, table.activities-table tr")
 
         for card in activity_cards:
             try:
