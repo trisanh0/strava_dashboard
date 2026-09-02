@@ -141,6 +141,7 @@ class StravaClubScraper:
         try:
             res = self.session.get(url_json, headers=headers_xhr, timeout=15)
             logger.info(f"XHR endpoint {url_json} -> HTTP {res.status_code}")
+            logger.info(f"XHR raw response (first 400 chars): {res.text[:400]}")
             if res.status_code == 200:
                 try:
                     data = res.json()
@@ -148,7 +149,10 @@ class StravaClubScraper:
                     if activities:
                         logger.info(f"Successfully parsed {len(activities)} activities from JSON endpoint.")
                         return activities
-                except Exception:
+                    else:
+                        logger.warning(f"XHR JSON parsed but 0 activities. JSON type: {type(data)}")
+                except Exception as json_err:
+                    logger.info(f"XHR is not JSON ({json_err}). Trying HTML parser...")
                     activities = self._parse_html_feed(res.text)
                     if activities:
                         logger.info(f"Successfully parsed {len(activities)} activities from XHR HTML.")
@@ -161,6 +165,7 @@ class StravaClubScraper:
         try:
             res = self.session.get(url_main, timeout=15)
             logger.info(f"Main club page {url_main} -> HTTP {res.status_code} (Final URL: {res.url})")
+            logger.info(f"Main page raw response (first 400 chars): {res.text[:400]}")
 
             if "login" in res.url.lower():
                 logger.error("Strava redirected to login page! Your STRAVA_SESSION_COOKIE is invalid, expired, or missing.")
