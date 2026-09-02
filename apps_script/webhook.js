@@ -44,7 +44,8 @@ function doPost(e) {
 
       return ContentService.createTextOutput(JSON.stringify({
         success: true,
-        addedCount: newRows.length
+        addedCount: newRows.length,
+        addedIds: newRows.map(row => String(row[0]))
       })).setMimeType(ContentService.MimeType.JSON);
     }
 

@@ -57,13 +57,21 @@ def run_scrape_cycle() -> int:
         return 0
 
     # 4. Append new activities to Google Sheet
-    added_count = sheet_sync.append_activities(new_activities)
+    added_count, added_ids = sheet_sync.append_activities(new_activities)
 
-    # 5. Dispatch Discord notifications
-    discord_notifier.send_activity_notifications(new_activities)
+    # 5. Dispatch Discord notifications ONLY for activities that were actually added to Google Sheet
+    if added_count > 0:
+        if added_ids:
+            activities_to_notify = [act for act in new_activities if act["unique_id"] in added_ids]
+        else:
+            activities_to_notify = new_activities[:added_count]
+        logger.info(f"Sending Discord notifications for {len(activities_to_notify)} appended activities...")
+        discord_notifier.send_activity_notifications(activities_to_notify)
+    else:
+        logger.info("0 activities added to Google Sheet. Skipping Discord notifications.")
 
     logger.info(f"Scrape cycle complete. Added {added_count} items to Google Sheet.")
-    return len(new_activities)
+    return added_count
 
 
 def main():
