@@ -130,59 +130,48 @@ class StravaClubScraper:
         if not self.session_cookie:
             logger.warning("STRAVA_SESSION_COOKIE is empty. Session cookie needed for private club data.")
 
-        # Attempt 1: Recent Activity JSON/XHR endpoint
-        url_json = f"https://www.strava.com/clubs/{self.club_id}/recent_activity"
-        headers_xhr = {
-            "Accept": "application/json, text/javascript, */*; q=0.01",
+        candidate_urls = [
+            f"https://www.strava.com/dashboard/feed?feed_type=club&club_id={self.club_id}",
+            f"https://www.strava.com/clubs/{self.club_id}/feed",
+            f"https://www.strava.com/clubs/{self.club_id}/recent_activity",
+            f"https://www.strava.com/clubs/{self.club_id}"
+        ]
+
+        headers_ajax = {
+            "Accept": "text/javascript, application/json, text/html, */*; q=0.01",
             "X-Requested-With": "XMLHttpRequest",
             "Referer": f"https://www.strava.com/clubs/{self.club_id}",
         }
 
-        try:
-            res = self.session.get(url_json, headers=headers_xhr, timeout=15)
-            logger.info(f"XHR endpoint {url_json} -> HTTP {res.status_code}")
-            logger.info(f"XHR raw response (first 400 chars): {res.text[:400]}")
-            if res.status_code == 200:
-                try:
-                    data = res.json()
-                    activities = self._parse_json_feed(data)
-                    if activities:
-                        logger.info(f"Successfully parsed {len(activities)} activities from JSON endpoint.")
-                        return activities
-                    else:
-                        logger.warning(f"XHR JSON parsed but 0 activities. JSON type: {type(data)}")
-                except Exception as json_err:
-                    logger.info(f"XHR is not JSON ({json_err}). Trying HTML parser...")
+        for url in candidate_urls:
+            try:
+                res = self.session.get(url, headers=headers_ajax, timeout=15)
+                logger.info(f"Checking feed URL {url} -> HTTP {res.status_code} (len: {len(res.text)})")
+
+                if "login" in res.url.lower():
+                    logger.error("Strava redirected to login! Check STRAVA_SESSION_COOKIE.")
+                    return []
+
+                if res.status_code == 200:
+                    # 1. Try JSON parsing
+                    try:
+                        data = res.json()
+                        activities = self._parse_json_feed(data)
+                        if activities:
+                            logger.info(f"Successfully parsed {len(activities)} activities from {url} JSON.")
+                            return activities
+                    except Exception:
+                        pass
+
+                    # 2. Try HTML parsing
                     activities = self._parse_html_feed(res.text)
                     if activities:
-                        logger.info(f"Successfully parsed {len(activities)} activities from XHR HTML.")
+                        logger.info(f"Successfully parsed {len(activities)} activities from {url} HTML.")
                         return activities
-        except Exception as e:
-            logger.warning(f"Error requesting XHR endpoint: {e}")
+            except Exception as e:
+                logger.warning(f"Error checking {url}: {e}")
 
-        # Attempt 2: Main Club Page HTML
-        url_main = f"https://www.strava.com/clubs/{self.club_id}"
-        try:
-            res = self.session.get(url_main, timeout=15)
-            logger.info(f"Main club page {url_main} -> HTTP {res.status_code} (Final URL: {res.url})")
-            logger.info(f"Main page raw response (first 400 chars): {res.text[:400]}")
-
-            if "login" in res.url.lower():
-                logger.error("Strava redirected to login page! Your STRAVA_SESSION_COOKIE is invalid, expired, or missing.")
-                return []
-
-            if res.status_code == 200:
-                activities = self._parse_html_feed(res.text)
-                if activities:
-                    logger.info(f"Successfully parsed {len(activities)} activities from main club page.")
-                    return activities
-                else:
-                    logger.warning(f"Club page loaded ({len(res.text)} bytes) but 0 activities matched feed selectors.")
-            else:
-                logger.error(f"Failed to load club page. HTTP status {res.status_code}")
-        except Exception as e:
-            logger.error(f"Error scraping club main page: {e}")
-
+        logger.warning(f"All candidate URLs checked for club {self.club_id} but 0 activities matched.")
         return []
 
     def _parse_json_feed(self, data: Any) -> List[Dict[str, Any]]:
