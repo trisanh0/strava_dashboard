@@ -83,7 +83,12 @@ def run_scrape_cycle() -> int:
 
     for act in scraped_activities:
         uid = act["unique_id"]
-        if not dup_checker.is_duplicate(act) and uid not in seen_ids:
+        if dup_checker.is_duplicate(act):
+            logger.info(f"Duplicate (already logged): {uid}")
+        elif uid in seen_ids:
+            logger.info(f"Duplicate in current batch: {uid}")
+        else:
+            logger.info(f"NEW activity detected: {uid}")
             new_activities.append(act)
             seen_ids.add(uid)
 
