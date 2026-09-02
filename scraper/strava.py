@@ -62,6 +62,45 @@ def parse_duration_string(time_str: str) -> float:
     return round(total_minutes, 2)
 
 
+def parse_relative_date(date_text: str) -> str:
+    """Parses relative and standard date text from Strava feed into ISO 8601 string."""
+    now = datetime.now(timezone.utc)
+    if not date_text:
+        return now.isoformat()
+
+    text = date_text.strip().lower()
+
+    # Extract time like "11:34" or "7:15 am"
+    time_match = re.search(r"(\d{1,2}):(\d{2})(?:\s*(am|pm))?", text)
+    hour = 12
+    minute = 0
+    if time_match:
+        hour = int(time_match.group(1))
+        minute = int(time_match.group(2))
+        ampm = time_match.group(3)
+        if ampm == "pm" and hour < 12:
+            hour += 12
+        elif ampm == "am" and hour == 12:
+            hour = 0
+
+    if "today" in text:
+        dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        return dt.isoformat()
+    elif "yesterday" in text:
+        dt = (now - timedelta(days=1)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+        return dt.isoformat()
+
+    # Format like "August 30, 2026 at 11:34" or "Aug 30 at 11:34"
+    try:
+        cleaned = re.sub(r"\s+at\s+", " ", date_text.strip())
+        dt = datetime.strptime(cleaned, "%B %d, %Y %H:%M")
+        return dt.replace(tzinfo=timezone.utc).isoformat()
+    except Exception:
+        pass
+
+    return now.isoformat()
+
+
 class StravaClubScraper:
     def __init__(self, club_id: Optional[str] = None, session_cookie: Optional[str] = None):
         self.club_id = club_id or STRAVA_CLUB_ID
@@ -78,7 +117,6 @@ class StravaClubScraper:
         })
 
         if self.session_cookie:
-            # Set direct Cookie header for 100% reliable domain attachment
             cookie_header = self.session_cookie
             if not any(k in cookie_header for k in ["_strava4_session", "="]):
                 cookie_header = f"_strava4_session={self.session_cookie}"
@@ -106,18 +144,11 @@ class StravaClubScraper:
             if res.status_code == 200:
                 try:
                     data = res.json()
-                    if isinstance(data, dict):
-                        logger.info(f"XHR JSON response top-level keys: {list(data.keys())}")
-                    else:
-                        logger.info(f"XHR JSON response type: {type(data)} - {str(data)[:200]}")
                     activities = self._parse_json_feed(data)
                     if activities:
                         logger.info(f"Successfully parsed {len(activities)} activities from JSON endpoint.")
                         return activities
-                    else:
-                        logger.warning(f"XHR returned JSON but _parse_json_feed matched 0 entries. Sample data: {str(data)[:400]}")
-                except Exception as json_err:
-                    logger.info(f"XHR is HTML (len {len(res.text)}). Sample: {res.text[:300].strip()}")
+                except Exception:
                     activities = self._parse_html_feed(res.text)
                     if activities:
                         logger.info(f"Successfully parsed {len(activities)} activities from XHR HTML.")
@@ -130,7 +161,7 @@ class StravaClubScraper:
         try:
             res = self.session.get(url_main, timeout=15)
             logger.info(f"Main club page {url_main} -> HTTP {res.status_code} (Final URL: {res.url})")
-            
+
             if "login" in res.url.lower():
                 logger.error("Strava redirected to login page! Your STRAVA_SESSION_COOKIE is invalid, expired, or missing.")
                 return []
@@ -142,13 +173,6 @@ class StravaClubScraper:
                     return activities
                 else:
                     logger.warning(f"Club page loaded ({len(res.text)} bytes) but 0 activities matched feed selectors.")
-                    # Log a snippet of the HTML body to understand DOM structure
-                    soup = BeautifulSoup(res.text, "html.parser")
-                    feed_div = soup.select_one("div.feed, div.recent-activities, div.activity-feed, main")
-                    if feed_div:
-                        logger.info(f"Feed container snippet: {str(feed_div)[:500]}")
-                    else:
-                        logger.info(f"Body snippet: {str(soup.body)[:500] if soup.body else res.text[:500]}")
             else:
                 logger.error(f"Failed to load club page. HTTP status {res.status_code}")
         except Exception as e:
@@ -184,7 +208,9 @@ class StravaClubScraper:
 
                 date_str = item.get("start_date_local") or item.get("start_date") or datetime.now(timezone.utc).isoformat()
                 athlete_key = f"{first_name}_{last_name}".replace(" ", "_")
-                unique_id = f"{athlete_key}_{dist_km * 1000:.0f}_{duration_min * 60:.0f}_{title}".replace(" ", "_")
+                dist_meters = int(round(dist_km * 1000))
+                duration_sec = int(round(duration_min * 60))
+                unique_id = f"{athlete_key}_{dist_meters}_{duration_sec}_{title}".replace(" ", "_")
 
                 activities.append({
                     "unique_id": unique_id,
@@ -209,7 +235,7 @@ class StravaClubScraper:
         soup = BeautifulSoup(html_content, "html.parser")
         activities = []
 
-        # Check for embedded Preact / React data-props (used in modern Strava web app)
+        # Check for embedded Preact / React data-props
         for preact_div in soup.select("div[data-props], div[data-react-props]"):
             props_str = preact_div.get("data-props") or preact_div.get("data-react-props")
             if props_str and ("activity" in props_str.lower() or "athlete" in props_str.lower()):
@@ -225,17 +251,17 @@ class StravaClubScraper:
         if activities:
             return activities
 
-        # Look for activity container elements in feed
+        # Look for modern and classic activity card containers
         activity_cards = soup.select(
-            "div.activity, div[data-testid='web-feed-entry'], div.entry-container, div.feed-entry, div.activity-container"
+            "[data-testid='web-feed-entry'], [id^='feed-entry-'], div.activity, div.entry-container, div.feed-entry"
         )
         if not activity_cards:
             activity_cards = soup.select("ul.feed li, div.recent-activities-list > div, table.activities-table tr")
 
         for card in activity_cards:
             try:
-                # Athlete Name
-                name_elem = card.select_one("a.entry-athlete, a.athlete-name, a[data-testid='owners-name'], .entry-header a")
+                # 1. Athlete Name
+                name_elem = card.select_one("[data-testid='owners-name'], a.entry-athlete, a.athlete-name, .entry-header a")
                 full_name = name_elem.get_text(strip=True) if name_elem else ""
                 if not full_name:
                     continue
@@ -243,52 +269,66 @@ class StravaClubScraper:
                 first_name = to_title_case(full_name.split()[0])
                 last_name = " ".join(full_name.split()[1:]) if len(full_name.split()) > 1 else ""
 
-                # Title & Type
-                title_elem = card.select_one("a.entry-title, .activity-title, [data-testid='activity_name'], h3 a")
-                title = title_elem.get_text(strip=True) if title_elem else "Activity"
+                # 2. Activity Title
+                title_elem = card.select_one("[data-testid='activity_name'], a.entry-title, .activity-title, h3 a")
+                title = title_elem.get_text(strip=True) if title_elem else "Workout"
 
-                # Detect type from icon or text if available
-                type_elem = card.select_one(".app-icon, .icon-sport, [data-testid='type_and_datetime']")
-                type_text = type_elem.get_text(strip=True) if type_elem else ""
+                # 3. Activity Type from icon title
                 activity_type = "Workout"
-                for known_type in ["Run", "Ride", "Swim", "Hike", "Walk", "Rowing", "Workout"]:
-                    if known_type.lower() in (title.lower() + " " + type_text.lower()):
-                        activity_type = known_type
-                        break
+                icon_elem = card.select_one("[data-testid='activity-icon'] title, .app-icon, .icon-sport")
+                if icon_elem:
+                    activity_type = icon_elem.get_text(strip=True)
+                else:
+                    for known in ["Run", "Ride", "Swim", "Hike", "Walk", "Rowing", "Workout"]:
+                        if known.lower() in title.lower():
+                            activity_type = known
+                            break
 
-                # Stat entries (Distance, Duration, Elevation, Pace)
+                # 4. Stats extraction (Distance, Pace, Time, Elevation)
                 dist_km = 0.0
                 duration_min = 0.0
+                pace = 0.0
                 elevation = 0.0
 
-                stat_items = card.select("ul.inline-stats li, .activity-stats .stat, .entry-stats .stat")
-                for stat in stat_items:
-                    label = stat.select_one(".stat-subheading, .title, .label")
-                    value = stat.select_one(".stat-value, .value, b, strong")
-                    if not value:
-                        continue
-                    lbl_text = (label.get_text(strip=True) if label else "").lower()
-                    val_text = value.get_text(strip=True).lower()
+                stat_lis = card.select("ul li, .activity-stats .stat, .entry-stats .stat")
+                for li in stat_lis:
+                    text = li.get_text(" ", strip=True)
+                    divs = li.find_all("div")
+                    spans = li.find_all("span")
 
-                    if "dist" in lbl_text or "km" in val_text or "mi" in val_text:
-                        dist_km = clean_number(val_text)
-                    elif "time" in lbl_text or "m" in val_text or "h" in val_text or ":" in val_text:
-                        duration_min = parse_duration_string(val_text)
-                    elif "elev" in lbl_text or "m" in val_text or "ft" in val_text:
-                        elevation = clean_number(val_text)
+                    lbl = spans[0].get_text(strip=True).lower() if spans else ""
+                    val = divs[-1].get_text(" ", strip=True).lower() if len(divs) >= 2 else (divs[0].get_text(" ", strip=True).lower() if divs else text.lower())
 
-                pace = round(duration_min / dist_km, 2) if dist_km > 0 else 0.0
+                    if "dist" in lbl or "distance" in text.lower():
+                        dist_km = clean_number(val if "dist" in lbl else text)
+                    elif "pace" in lbl or "pace" in text.lower():
+                        p_val = val if "pace" in lbl else text
+                        pace_match = re.search(r"(\d+):(\d{2})", p_val)
+                        if pace_match:
+                            pace = round(float(pace_match.group(1)) + float(pace_match.group(2)) / 60, 2)
+                        else:
+                            pace = clean_number(p_val)
+                    elif "time" in lbl or "time" in text.lower():
+                        duration_min = parse_duration_string(val if "time" in lbl else text)
+                    elif "elev" in lbl or "elev" in text.lower():
+                        elevation = clean_number(val if "elev" in lbl else text)
+
+                if pace == 0.0 and dist_km > 0 and duration_min > 0:
+                    pace = round(duration_min / dist_km, 2)
+                elif duration_min == 0.0 and dist_km > 0 and pace > 0:
+                    duration_min = round(dist_km * pace, 2)
+
                 team = get_team(first_name)
                 eff_dist = get_effective_distance(dist_km, activity_type, first_name, pace)
 
-                # Date / Time
-                time_elem = card.select_one("time, .timestamp, [data-testid='date_and_group']")
-                date_str = datetime.now(timezone.utc).isoformat()
-                if time_elem and time_elem.has_attr("datetime"):
-                    date_str = time_elem["datetime"]
+                # 5. Date / Time
+                time_elem = card.select_one("[data-testid='date_at_time'], time, .timestamp")
+                date_str = parse_relative_date(time_elem.get_text(strip=True) if time_elem else "")
 
                 athlete_key = f"{first_name}_{last_name}".replace(" ", "_")
-                unique_id = f"{athlete_key}_{dist_km * 1000:.0f}_{duration_min * 60:.0f}_{title}".replace(" ", "_")
+                dist_meters = int(round(dist_km * 1000))
+                duration_sec = int(round(duration_min * 60))
+                unique_id = f"{athlete_key}_{dist_meters}_{duration_sec}_{title}".replace(" ", "_")
 
                 activities.append({
                     "unique_id": unique_id,
@@ -307,3 +347,4 @@ class StravaClubScraper:
                 logger.debug(f"Error parsing HTML card: {e}")
 
         return activities
+
