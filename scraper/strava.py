@@ -196,6 +196,29 @@ class StravaClubScraper:
         elif isinstance(data, list):
             entries = data
 
+        expanded = []
+        for item in entries:
+            if isinstance(item, dict) and item.get("entity") == "GroupActivity":
+                for ga in item.get("rowData", {}).get("activities", []):
+                    expanded.append({
+                        "entity": "Activity",
+                        "activity": {
+                            "athlete": {
+                                "firstName": ga.get("athlete_firstname") or (ga.get("athlete_name") or "").split()[0],
+                                "athleteName": ga.get("athlete_name") or ""
+                            },
+                            "type": ga.get("type") or "Workout",
+                            "activityName": ga.get("name") or ga.get("type") or "Workout",
+                            "id": ga.get("activity_id") or ga.get("entity_id") or "",
+                            "startDate": ga.get("start_date") or ga.get("start_date_local"),
+                            "stats": ga.get("stats", []),
+                            "elapsedTime": ga.get("elapsed_time")
+                        }
+                    })
+            else:
+                expanded.append(item)
+        entries = expanded
+
         for item in entries:
             try:
                 # Handle modern feed entry: { "entity": "Activity", "activity": { ... } }
@@ -322,28 +345,12 @@ class StravaClubScraper:
 
         return activities
 
-    def _parse_html_feed(self, html_content: str) -> List[Dict[str, Any]]:
-        """Parses Strava Club HTML markup for recent activity cards."""
-        soup = BeautifulSoup(html_content, "html.parser")
+    def _parse_html_feed(self, html_text: str) -> List[Dict[str, Any]]:
+        """Parses server-rendered HTML activity cards from Strava feed."""
         activities = []
+        soup = BeautifulSoup(html_text, "html.parser")
 
-        # Check for embedded Preact / React data-props
-        for preact_div in soup.select("div[data-props], div[data-react-props]"):
-            props_str = preact_div.get("data-props") or preact_div.get("data-react-props")
-            if props_str and ("activity" in props_str.lower() or "athlete" in props_str.lower()):
-                try:
-                    import json
-                    parsed_props = json.loads(props_str)
-                    extracted = self._parse_json_feed(parsed_props)
-                    if extracted:
-                        activities.extend(extracted)
-                except Exception:
-                    pass
-
-        if activities:
-            return activities
-
-        # Look for modern and classic activity card containers
+        # Select modern and legacy card containers
         activity_cards = soup.select(
             "[data-testid='web-feed-entry'], [id^='feed-entry-'], div.activity, div.entry-container, div.feed-entry"
         )
@@ -439,4 +446,3 @@ class StravaClubScraper:
                 logger.debug(f"Error parsing HTML card: {e}")
 
         return activities
-
